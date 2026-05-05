@@ -1,0 +1,20 @@
+services:
+  9router:
+    build: .
+    container_name: 9router
+    ports:
+      - "20128:20128"
+      - "1455:1455"
+      - "443:443"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DATA_DIR=/app/data
+      - PORT=20128
+      - HOSTNAME=0.0.0.0
+      - NODE_ENV=production
+      - NEXT_PUBLIC_BASE_URL=http://localhost:20128
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
+    env_file:
+      - .env
+    restart: unless-stopped
