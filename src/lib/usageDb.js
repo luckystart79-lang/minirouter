@@ -192,7 +192,7 @@ export async function getActiveRequests() {
         const match = modelKey.match(/^(.*) \((.*)\)$/);
         const modelName = match ? match[1] : modelKey;
         const providerName = match ? match[2] : "unknown";
-        activeRequests.push({ model: modelName, provider: providerName, account: accountName, count });
+        activeRequests.push({ model: modelName, provider: providerName, account: accountName, connectionId, count });
       }
     }
   }
@@ -208,7 +208,8 @@ export async function getActiveRequests() {
       const t = e.tokens || {};
       const promptTokens = t.prompt_tokens || t.input_tokens || 0;
       const completionTokens = t.completion_tokens || t.output_tokens || 0;
-      return { timestamp: e.timestamp, model: e.model, provider: e.provider || "", promptTokens, completionTokens, status: e.status || "ok" };
+      const accountName = e.connectionId ? (connectionMap[e.connectionId] || `Account ${e.connectionId.slice(0, 8)}...`) : null;
+      return { timestamp: e.timestamp, model: e.model, provider: e.provider || "", promptTokens, completionTokens, status: e.status || "ok", connectionId: e.connectionId, account: accountName };
     })
     .filter((e) => {
       if (e.promptTokens === 0 && e.completionTokens === 0) return false;
@@ -516,11 +517,13 @@ export async function getUsageStats(period = "all") {
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
     .map((e) => {
       const t = e.tokens || {};
+      const accountName = e.connectionId ? (connectionMap[e.connectionId] || `Account ${e.connectionId.slice(0, 8)}...`) : null;
       return {
         timestamp: e.timestamp, model: e.model, provider: e.provider || "",
         promptTokens: t.prompt_tokens || t.input_tokens || 0,
         completionTokens: t.completion_tokens || t.output_tokens || 0,
         status: e.status || "ok",
+        connectionId: e.connectionId, account: accountName,
       };
     })
     .filter((e) => {
@@ -557,7 +560,7 @@ export async function getUsageStats(period = "all") {
         stats.activeRequests.push({
           model: match ? match[1] : modelKey,
           provider: match ? match[2] : "unknown",
-          account: accountName, count,
+          account: accountName, connectionId, count,
         });
       }
     }

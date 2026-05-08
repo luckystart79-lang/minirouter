@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "node-telegram-bot-api": "^0.67.0",
+    "puppeteer-core": "^24.42.0",
+    "screenshot-desktop": "^1.15.4"
+  }
+}

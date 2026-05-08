@@ -26,7 +26,7 @@ export const CAVEMAN_PROMPTS = {
   ].join(" "),
 
   [CAVEMAN_LEVELS.ULTRA]: [
-    "Respond ultra-terse. Maximum compression. Telegraphic.",
+    "Respond ultra-terse. Maximum compression.",
     "Abbreviate (DB/auth/config/req/res/fn/impl), strip conjunctions, use arrows for causality (X → Y). One word when one word enough.",
     "Pattern: [thing] → [result]. [fix].",
     SHARED_BOUNDARIES,

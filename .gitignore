@@ -70,3 +70,7 @@ ecosystem.config.*
 
 scripts/agSniffer/*
 gitbooks/*
+
+# remote-agent
+remote-agent/node_modules/
+remote-agent/.env

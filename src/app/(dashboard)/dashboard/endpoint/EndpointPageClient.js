@@ -19,7 +19,7 @@ const STATUS_POLL_INTERVAL_MS = 5000;
 const CAVEMAN_LEVELS = [
   { id: "lite", label: "Lite", desc: "Drop filler, keep grammar" },
   { id: "full", label: "Full", desc: "Drop articles, fragments OK" },
-  { id: "ultra", label: "Ultra", desc: "Telegraphic, max compression" },
+  { id: "ultra", label: "Ultra", desc: "Ultra-terse, max compression" },
 ];
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
