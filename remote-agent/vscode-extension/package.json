@@ -1,0 +1,32 @@
+{
+    "name": "9router-remote-bridge",
+    "displayName": "9Router Remote Bridge",
+    "description": "Nhận prompt từ Telegram bot (remote-agent) và nhập thẳng vào ô chat Antigravity/VS Code.",
+    "version": "1.0.0",
+    "publisher": "9router",
+    "engines": {
+        "vscode": "^1.60.0"
+    },
+    "extensionKind": ["ui"],
+    "categories": ["Other"],
+    "activationEvents": ["onStartupFinished"],
+    "main": "./src/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "9router-bridge.status",
+                "title": "9Router Bridge: Status"
+            }
+        ],
+        "configuration": {
+            "title": "9Router Remote Bridge",
+            "properties": {
+                "9router-bridge.port": {
+                    "type": "number",
+                    "default": 3848,
+                    "description": "HTTP port for receiving prompts from remote-agent"
+                }
+            }
+        }
+    }
+}

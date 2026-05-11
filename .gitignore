@@ -74,3 +74,12 @@ gitbooks/*
 # remote-agent
 remote-agent/node_modules/
 remote-agent/.env
+remote-agent/.downloads/
+
+# Cloned skill repos (not part of this project)
+gstack/
+claude-seo/
+marketingskills/
+
+.chrome-shot-profile/
+*.png

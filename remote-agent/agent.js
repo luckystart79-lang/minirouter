@@ -664,12 +664,106 @@ bot.onText(/\/cat\s+(.+)/, async (msg, match) => {
 const SKIP_COMMANDS = ["/start", "/stop", "/status", "/cd", "/pwd", "/new", "/cli", "/file", "/run", "/py", "/screen", "/web", "/ls", "/cat"];
 
 bot.on("message", async (msg) => {
-  if (!msg.text) return;
-  if (SKIP_COMMANDS.some(cmd => msg.text.startsWith(cmd))) return;
+  if (!msg.text && !msg.photo && !msg.document) return;
+  let promptText = msg.text || msg.caption || "";
+  if (SKIP_COMMANDS.some(cmd => promptText.startsWith(cmd))) return;
 
   const chatId = msg.chat.id;
   if (!isAllowed(msg.from.id)) {
     return bot.sendMessage(chatId, `🚫 Không có quyền. ID: \`${msg.from.id}\``, { parse_mode: "Markdown" });
+  }
+
+  // Intercept /ui command — POST to 9Router Bridge extension with workspace targeting
+  // Syntax: /ui prompt (any window) | /ui @workspace prompt (specific window)
+  if (promptText.startsWith("/ui ")) {
+    let uiText = promptText.substring(4).trim();
+    if (!uiText) return bot.sendMessage(chatId, "❌ Thiếu nội dung.\nDùng: `/ui <prompt>` hoặc `/ui @workspace <prompt>`\nXem workspace: `/ui @list`", { parse_mode: "Markdown" });
+
+    // /ui @list — show connected windows
+    if (uiText === "@list") {
+      try {
+        const listRes = await new Promise((resolve, reject) => {
+          const req = http.request({ hostname: '127.0.0.1', port: 3848, path: '/windows', method: 'GET', timeout: 3000 }, (res) => {
+            let body = ''; res.on('data', c => body += c); res.on('end', () => resolve(body));
+          });
+          req.on('error', reject); req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); }); req.end();
+        });
+        const data = JSON.parse(listRes);
+        const wins = Object.entries(data.windows || {});
+        if (wins.length === 0) return bot.sendMessage(chatId, "📭 Không có cửa sổ Antigravity nào đang kết nối.");
+        const list = wins.map(([ws, info]) => `• ${ws}\n  ${info.title}`).join("\n");
+        return bot.sendMessage(chatId, `🖥️ Cửa sổ đang kết nối:\n${list}\n\nDùng: /ui @tên_workspace prompt`);
+      } catch (e) {
+        return bot.sendMessage(chatId, `❌ Extension chưa chạy. Lỗi: ${e.message}`);
+      }
+    }
+
+    // Parse @workspace
+    let targetWorkspace = null;
+    if (uiText.startsWith("@")) {
+      const spaceIdx = uiText.indexOf(" ");
+      if (spaceIdx === -1) return bot.sendMessage(chatId, "❌ Thiếu prompt. Dùng: `/ui @workspace <prompt>`", { parse_mode: "Markdown" });
+      targetWorkspace = uiText.substring(1, spaceIdx).trim();
+      uiText = uiText.substring(spaceIdx + 1).trim();
+    }
+
+    if (!uiText) return bot.sendMessage(chatId, "❌ Thiếu nội dung prompt.");
+
+    try {
+      const payload = JSON.stringify({ prompt: uiText, targetWorkspace });
+      const bridgeRes = await new Promise((resolve, reject) => {
+        const req = http.request({
+          hostname: '127.0.0.1', port: 3848, path: '/api/send-prompt',
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+          timeout: 3000
+        }, (res) => {
+          let body = ''; res.on('data', c => body += c);
+          res.on('end', () => resolve({ status: res.statusCode, body }));
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+        req.write(payload); req.end();
+      });
+
+      if (bridgeRes.status === 200) {
+        const result = JSON.parse(bridgeRes.body);
+        const target = targetWorkspace ? `@${targetWorkspace}` : "any window";
+        const connected = result.targetConnected;
+        let statusMsg = connected
+          ? `✅ Đã gửi vào Antigravity (${target})`
+          : `⏳ Đã xếp hàng (${target} chưa kết nối)`;
+
+        // If target not connected, try to open workspace
+        if (!connected && targetWorkspace) {
+          // Common workspace paths mapping
+          const workspacePaths = {
+            '9router': 'e:\\9router',
+            'redmine': 'e:\\Bitnami\\redmine-4.2.1-2026\\apps\\redmine\\htdocs',
+            'dashboard': 'e:\\Bitnami\\redmine-4.2.1-2026\\apps\\redmine\\htdocs\\plugins\\dashboard',
+          };
+          const wsPath = workspacePaths[targetWorkspace.toLowerCase()];
+          if (wsPath) {
+            statusMsg += `\n🚀 Đang mở workspace ${wsPath}...`;
+            // Open Antigravity with workspace
+            const { exec } = require("child_process");
+            exec(`antigravity "${wsPath}"`, { timeout: 10000 }, (err) => {
+              if (err) console.log("[UI] Open workspace error:", err.message);
+            });
+          } else {
+            statusMsg += `\n⚠️ Không biết đường dẫn workspace "${targetWorkspace}". Thêm vào workspacePaths trong agent.js.`;
+          }
+        }
+
+        const wins = (result.connectedWindows || []).join(", ") || "none";
+        statusMsg += `\n💬 ${uiText.substring(0, 60)}${uiText.length > 60 ? '...' : ''}`;
+        statusMsg += `\n🖥️ Windows: ${wins}`;
+        return bot.sendMessage(chatId, statusMsg);
+      } else {
+        return bot.sendMessage(chatId, `⚠️ Extension lỗi: ${bridgeRes.body}`);
+      }
+    } catch (e) {
+      return bot.sendMessage(chatId, `❌ Extension chưa chạy.\nLỗi: ${e.message}\n\n💡 Cài extension 9Router Bridge vào Antigravity trước.`);
+    }
   }
 
   if (currentTask) {
@@ -677,10 +771,32 @@ bot.on("message", async (msg) => {
     return bot.sendMessage(chatId, `⏳ Đang bận (${elapsed}s). /stop để hủy.`);
   }
 
+  // Handle file/image download
+  let attachedFilePath = "";
+  if (msg.photo || msg.document) {
+    const statusMsg = await bot.sendMessage(chatId, `📥 Đang tải file/ảnh...`);
+    try {
+      const downloadsDir = path.join(__dirname, '.downloads');
+      if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir, { recursive: true });
+      
+      let fileId;
+      if (msg.photo) {
+        fileId = msg.photo[msg.photo.length - 1].file_id; // highest res
+      } else if (msg.document) {
+        fileId = msg.document.file_id;
+      }
+      
+      attachedFilePath = await bot.downloadFile(fileId, downloadsDir);
+      bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+    } catch (e) {
+      return bot.editMessageText(`❌ Lỗi tải file: ${e.message}`, { chat_id: chatId, message_id: statusMsg.message_id }).catch(() => {});
+    }
+  }
+
   // Parse workspace shortcut: /alias prompt
   let workspace = currentWorkspace;
-  let prompt = msg.text.trim();
-  const prefixMatch = prompt.match(/^\/(\w+)\s+(.+)$/s);
+  let prompt = promptText.trim();
+  const prefixMatch = prompt.match(/^\/(\w+)\s*(.*)$/s);
   if (prefixMatch) {
     const alias = prefixMatch[1].toLowerCase();
     if (CONFIG.workspaces[alias]) {
@@ -703,7 +819,7 @@ bot.on("message", async (msg) => {
   const typingInterval = setInterval(() => bot.sendChatAction(chatId, "typing"), 4000);
 
   try {
-    const result = await runCLI(prompt, workspace, chatId, resume);
+    const result = await runCLI(prompt, workspace, chatId, resume, attachedFilePath);
     clearInterval(typingInterval);
     hasSession = true;
     await sendResult(chatId, statusMsg.message_id, result);
@@ -719,13 +835,28 @@ bot.on("message", async (msg) => {
 
 // ── Generic CLI Runner ──────────────────────────────────────────
 
-function runCLI(prompt, workspace, chatId, resume = false) {
+function runCLI(prompt, workspace, chatId, resume = false, attachedFilePath = "") {
   return new Promise((resolve, reject) => {
     const output = [];
     const startTime = Date.now();
     const cli = CLI_BACKENDS[activeCli];
 
-    const escapedPrompt = prompt.replace(/"/g, '\\"').replace(/`/g, '\\`');
+    let imageFlag = "";
+    let finalPrompt = prompt;
+    
+    if (attachedFilePath) {
+      if (/\.(jpg|jpeg|png|webp|gif)$/i.test(attachedFilePath)) {
+        if (activeCli === "codex") {
+          imageFlag = ` -i "${attachedFilePath}"`;
+        } else {
+          finalPrompt += `\n[Image attached at: ${attachedFilePath}]`;
+        }
+      } else {
+        finalPrompt += `\n[File attached. Please read this file: ${attachedFilePath}]`;
+      }
+    }
+
+    const escapedPrompt = finalPrompt.replace(/"/g, '\\"').replace(/`/g, '\\`');
 
     // Build command based on CLI type
     let cmd;
@@ -736,11 +867,8 @@ function runCLI(prompt, workspace, chatId, resume = false) {
     } else if (activeCli === "codex") {
       const extra = cli.extraFlags ? ` ${cli.extraFlags}` : '';
       codexOutputFile = path.join(__dirname, `.codex_output_${Date.now()}.txt`);
-      if (resume) {
-        cmd = `${cli.cmd} exec ${cli.resumeCmd} "${escapedPrompt}" -o "${codexOutputFile}"${extra}`;
-      } else {
-        cmd = `${cli.cmd} exec "${escapedPrompt}" -o "${codexOutputFile}"${extra}`;
-      }
+      // codex exec does not support resuming, so we just run exec
+      cmd = `${cli.cmd} exec "${escapedPrompt}"${imageFlag} -o "${codexOutputFile}"${extra}`;
     }
 
     const proc = spawn(cmd, [], {
@@ -971,6 +1099,7 @@ async function takeWebScreenshot(url, width = 1280, height = 800) {
 // ── HTTP Bridge API Server ──────────────────────────────────────
 
 let activeChatId = null; // Track the last chat ID for bridge API
+let uiPromptQueue = []; // Queue for /ui commands to be polled by Browser Extensions
 bot.on("message", (msg) => { if (isAllowed(msg.from?.id)) activeChatId = msg.chat.id; });
 
 const bridgeServer = http.createServer(async (req, res) => {
@@ -979,6 +1108,17 @@ const bridgeServer = http.createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
 
   if (req.method === "OPTIONS") { res.writeHead(200); return res.end(); }
+  
+  // Handle GET requests
+  if (req.method === "GET") {
+    if (req.url === "/api/poll-ui") {
+      const prompt = uiPromptQueue.shift() || null;
+      res.writeHead(200);
+      return res.end(JSON.stringify({ prompt }));
+    }
+    res.writeHead(404); return res.end(JSON.stringify({ error: "Not found" }));
+  }
+
   if (req.method !== "POST") { res.writeHead(405); return res.end(JSON.stringify({ error: "POST only" })); }
   if (!activeChatId) { res.writeHead(400); return res.end(JSON.stringify({ error: "No active chat. Send a message to the bot first." })); }
 
@@ -1050,6 +1190,20 @@ const bridgeServer = http.createServer(async (req, res) => {
           res.writeHead(200); res.end(JSON.stringify({ ok: true }));
           break;
         }
+        case "/api/prompt": {
+          if (!data.prompt) throw new Error("Missing 'prompt'");
+          if (!CONFIG.allowedUsers[0]) throw new Error("No allowed users configured to simulate from");
+          
+          // Simulate a Telegram message event
+          bot.emit("message", {
+            text: data.prompt,
+            chat: { id: chatId },
+            from: { id: parseInt(CONFIG.allowedUsers[0]) }
+          });
+          
+          res.writeHead(200); res.end(JSON.stringify({ ok: true, message: "Prompt triggered successfully" }));
+          break;
+        }
         case "/api/send-text": {
           if (!data.content) throw new Error("Missing 'content'");
           const filename = data.filename || `output_${Date.now()}.txt`;
@@ -1059,7 +1213,7 @@ const bridgeServer = http.createServer(async (req, res) => {
           break;
         }
         default:
-          res.writeHead(404); res.end(JSON.stringify({ error: `Unknown endpoint: ${req.url}`, available: ["/api/send-file", "/api/screenshot", "/api/web-screenshot", "/api/run-command", "/api/run-python", "/api/notify", "/api/send-text"] }));
+          res.writeHead(404); res.end(JSON.stringify({ error: `Unknown endpoint: ${req.url}`, available: ["/api/send-file", "/api/screenshot", "/api/web-screenshot", "/api/run-command", "/api/run-python", "/api/notify", "/api/send-text", "/api/prompt"] }));
       }
     } catch (e) {
       console.error("Bridge API error:", e.message);
