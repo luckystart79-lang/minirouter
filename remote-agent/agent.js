@@ -84,6 +84,14 @@ const CLI_BACKENDS = {
     env: { FORCE_COLOR: "0", NO_COLOR: "1" },
     extraFlags: "--dangerously-bypass-approvals-and-sandbox",  // headless bot mode
   },
+  claude: {
+    name: "Claude CLI",
+    cmd: "claude.cmd",
+    promptFlag: "-p",
+    resumeCmd: "--continue",
+    env: { FORCE_COLOR: "0", NO_COLOR: "1" },
+    extraFlags: "--output-format text --dangerously-skip-permissions",
+  },
 };
 let activeCli = "gemini";
 
@@ -661,7 +669,7 @@ bot.onText(/\/cat\s+(.+)/, async (msg, match) => {
 
 // ── Main message handler ────────────────────────────────────────
 
-const SKIP_COMMANDS = ["/start", "/stop", "/status", "/cd", "/pwd", "/new", "/cli", "/file", "/run", "/py", "/screen", "/web", "/ls", "/cat"];
+const SKIP_COMMANDS = ["/start", "/stop", "/status", "/cd", "/pwd", "/new", "/cli", "/file", "/run", "/py", "/screen", "/web", "/ls", "/cat", "/get"];
 
 bot.on("message", async (msg) => {
   if (!msg.text && !msg.photo && !msg.document) return;
@@ -869,6 +877,10 @@ function runCLI(prompt, workspace, chatId, resume = false, attachedFilePath = ""
       codexOutputFile = path.join(__dirname, `.codex_output_${Date.now()}.txt`);
       // codex exec does not support resuming, so we just run exec
       cmd = `${cli.cmd} exec "${escapedPrompt}"${imageFlag} -o "${codexOutputFile}"${extra}`;
+    } else if (activeCli === "claude") {
+      const resumeFlag = resume ? `${cli.resumeCmd} ` : '';
+      const extra = cli.extraFlags ? ` ${cli.extraFlags}` : '';
+      cmd = `${cli.cmd} ${resumeFlag}${cli.promptFlag} "${escapedPrompt}"${extra}`;
     }
 
     const proc = spawn(cmd, [], {
