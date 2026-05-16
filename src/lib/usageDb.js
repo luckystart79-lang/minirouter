@@ -807,54 +807,135 @@ export async function getUsageStats(period = "all") {
 
 /**
  * Get time-series chart data for a given period
- * @param {"24h"|"7d"|"30d"|"60d"} period
- * @returns {Promise<Array<{label: string, tokens: number, cost: number}>>}
+ * @param {"today"|"24h"|"7d"|"30d"|"60d"} period
+ * @param {"hour"|"day"|"week"|"month"|null} groupBy - Override auto grouping
+ * @returns {Promise<Array<{label: string, tokens: number, cost: number, requests: number}>>}
  */
-export async function getChartData(period = "7d") {
+export async function getChartData(period = "7d", groupBy = null) {
   const db = await getUsageDb();
   const history = db.data.history || [];
   const dailySummary = db.data.dailySummary || {};
   const now = Date.now();
 
-  // 24h: bucket by hour from live history
-  if (period === "24h") {
-    const bucketCount = 24;
+  // Auto-determine groupBy if not specified
+  if (!groupBy) {
+    if (period === "today" || period === "24h") groupBy = "hour";
+    else groupBy = "day";
+  }
+
+  // === GROUP BY HOUR (from live history) ===
+  if (groupBy === "hour") {
     const bucketMs = 3600000;
-    const labelFn = (ts) => new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-    const startTime = now - bucketCount * bucketMs;
-    const buckets = Array.from({ length: bucketCount }, (_, i) => {
+    const bucketCount = period === "today" || period === "24h" ? 24 : (period === "7d" ? 7 * 24 : period === "30d" ? 30 * 24 : 60 * 24);
+    // Cap at 168 hours (7 days) max for hourly view
+    const effectiveBuckets = Math.min(bucketCount, 168);
+    const startTime = now - effectiveBuckets * bucketMs;
+    const labelFn = (ts) => {
+      const d = new Date(ts);
+      if (effectiveBuckets <= 24) {
+        return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false });
+      }
+      return d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }) + " " + String(d.getHours()).padStart(2, "0") + "h";
+    };
+
+    const buckets = Array.from({ length: effectiveBuckets }, (_, i) => {
       const ts = startTime + i * bucketMs;
-      return { label: labelFn(ts), tokens: 0, cost: 0 };
+      return { label: labelFn(ts), tokens: 0, cost: 0, requests: 0 };
     });
 
     for (const entry of history) {
       const entryTime = new Date(entry.timestamp).getTime();
       if (entryTime < startTime || entryTime > now) continue;
-      const idx = Math.min(Math.floor((entryTime - startTime) / bucketMs), bucketCount - 1);
-      buckets[idx].tokens += (entry.tokens?.prompt_tokens || 0) + (entry.tokens?.completion_tokens || 0);
+      const idx = Math.min(Math.floor((entryTime - startTime) / bucketMs), effectiveBuckets - 1);
+      buckets[idx].tokens += (entry.tokens?.prompt_tokens || entry.tokens?.input_tokens || 0) + (entry.tokens?.completion_tokens || entry.tokens?.output_tokens || 0);
       buckets[idx].cost += entry.cost || 0;
+      buckets[idx].requests += 1;
     }
     return buckets;
   }
 
-  // 7d/30d/60d: bucket by day from dailySummary (local dates)
-  const bucketCount = period === "7d" ? 7 : period === "30d" ? 30 : 60;
-  const today = new Date();
-  const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  // === GROUP BY DAY (from dailySummary) ===
+  if (groupBy === "day") {
+    const bucketCount = period === "today" || period === "24h" ? 1 : period === "7d" ? 7 : period === "30d" ? 30 : 60;
+    const today = new Date();
+    const labelFn = (d) => d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" });
 
-  const buckets = Array.from({ length: bucketCount }, (_, i) => {
-    const d = new Date(today);
-    d.setDate(d.getDate() - (bucketCount - 1 - i));
-    const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const dayData = dailySummary[dateKey];
-    return {
-      label: labelFn(d),
-      tokens: dayData ? (dayData.promptTokens || 0) + (dayData.completionTokens || 0) : 0,
-      cost: dayData ? (dayData.cost || 0) : 0,
-    };
-  });
+    const buckets = Array.from({ length: bucketCount }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (bucketCount - 1 - i));
+      const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const dayData = dailySummary[dateKey];
+      return {
+        label: labelFn(d),
+        tokens: dayData ? (dayData.promptTokens || 0) + (dayData.completionTokens || 0) : 0,
+        cost: dayData ? (dayData.cost || 0) : 0,
+        requests: dayData ? (dayData.requests || 0) : 0,
+      };
+    });
 
-  return buckets;
+    return buckets;
+  }
+
+  // === GROUP BY WEEK ===
+  if (groupBy === "week") {
+    const totalDays = period === "7d" ? 7 : period === "30d" ? 30 : 60;
+    const weekCount = Math.ceil(totalDays / 7);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const buckets = [];
+    for (let w = weekCount - 1; w >= 0; w--) {
+      const weekEnd = new Date(today);
+      weekEnd.setDate(weekEnd.getDate() - w * 7);
+      const weekStart = new Date(weekEnd);
+      weekStart.setDate(weekStart.getDate() - 6);
+
+      let tokens = 0, cost = 0, requests = 0;
+      for (let d = new Date(weekStart); d <= weekEnd; d.setDate(d.getDate() + 1)) {
+        const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const dayData = dailySummary[dateKey];
+        if (dayData) {
+          tokens += (dayData.promptTokens || 0) + (dayData.completionTokens || 0);
+          cost += dayData.cost || 0;
+          requests += dayData.requests || 0;
+        }
+      }
+
+      const label = `${weekStart.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" })} - ${weekEnd.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" })}`;
+      buckets.push({ label, tokens, cost, requests });
+    }
+    return buckets;
+  }
+
+  // === GROUP BY MONTH ===
+  if (groupBy === "month") {
+    const totalDays = period === "7d" ? 7 : period === "30d" ? 30 : 60;
+    const today = new Date();
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - totalDays);
+
+    // Collect months in range
+    const monthBuckets = {};
+    for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
+      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      if (!monthBuckets[monthKey]) {
+        monthBuckets[monthKey] = {
+          label: d.toLocaleDateString("vi-VN", { month: "long", year: "numeric" }),
+          tokens: 0, cost: 0, requests: 0,
+        };
+      }
+      const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const dayData = dailySummary[dateKey];
+      if (dayData) {
+        monthBuckets[monthKey].tokens += (dayData.promptTokens || 0) + (dayData.completionTokens || 0);
+        monthBuckets[monthKey].cost += dayData.cost || 0;
+        monthBuckets[monthKey].requests += dayData.requests || 0;
+      }
+    }
+    return Object.values(monthBuckets);
+  }
+
+  return [];
 }
 
 // Re-export request details functions from new SQLite-based module

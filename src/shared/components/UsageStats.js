@@ -434,6 +434,9 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       {/* Overview cards */}
       {loading ? spinner : <OverviewCards stats={stats} />}
 
+      {/* Token / Cost chart - sync period */}
+      {loading ? spinner : <UsageChart period={period} />}
+
       {/* Provider topology + Recent Requests */}
       {loading ? spinner : (
         <div className="grid min-w-0 grid-cols-1 items-stretch gap-2 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
@@ -447,9 +450,6 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           <RecentRequests requests={stats.recentRequests || []} />
         </div>
       )}
-
-      {/* Token / Cost chart - sync period */}
-      {loading ? spinner : <UsageChart period={period} />}
 
       {/* Table with dropdown selector */}
       <div className="flex flex-col gap-3">

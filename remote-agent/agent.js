@@ -36,6 +36,7 @@
  */
 
 require("dotenv").config();
+const crypto = require("crypto");
 const TelegramBot = require("node-telegram-bot-api");
 const { spawn, exec } = require("child_process");
 const { execSync } = require("child_process");
@@ -53,6 +54,11 @@ const CONFIG = {
   workspaces: JSON.parse(process.env.WORKSPACES || "{}"),
   maxTimeout: parseInt(process.env.MAX_TIMEOUT || "600") * 1000,
   bridgePort: parseInt(process.env.BRIDGE_PORT || "3847"),
+  // Security
+  sessionPin: process.env.SESSION_PIN || "",  // PIN to unlock session (set in .env)
+  autoLockMinutes: parseInt(process.env.AUTO_LOCK_MINUTES || "30"),  // auto-lock after inactivity
+  maxPinAttempts: parseInt(process.env.MAX_PIN_ATTEMPTS || "3"),  // lockout after N failures
+  lockoutMinutes: parseInt(process.env.LOCKOUT_MINUTES || "10"),  // lockout duration
 };
 
 if (!CONFIG.token) {
@@ -66,6 +72,68 @@ let currentTask = null;
 let currentWorkspace = CONFIG.defaultWorkspace;
 const TELEGRAM_MAX_LEN = 4000;
 const PAGE_SIZE = 20;
+
+// ── Security State ──────────────────────────────────────────────
+
+let sessionUnlocked = !CONFIG.sessionPin;  // if no PIN set, always unlocked
+let lastActivityTime = Date.now();
+let failedPinAttempts = 0;
+let lockoutUntil = 0;
+
+
+// Dangerous command patterns — blocks destructive system commands
+const DANGEROUS_PATTERNS = [
+  /\bformat\b/i,                         // format drives
+  /\bdel\s+[\/\\]/i,                     // del /f, del \windows
+  /\brmdir\s+[\/\\]/i,                   // rmdir system dirs
+  /\brm\s+-rf\s+[\/\\]/i,               // rm -rf /
+  /\brd\s+[\/\\].*\/s/i,                // rd /s /q C:\
+  /\breg\s+(delete|add)\b/i,             // registry modification
+  /\bnetsh\b.*\b(reset|delete|set)\b/i,  // network config changes
+  /\bnet\s+user\b/i,                     // user account manipulation
+  /\bnet\s+stop\b/i,                     // stop services
+  /\bschtasks\s+\/create\b/i,            // scheduled tasks
+  /\bbcdedit\b/i,                        // boot config
+  /\bdiskpart\b/i,                       // disk partition tool
+  /\bpowershell.*-enc/i,                 // encoded powershell (obfuscation)
+  /\bInvoke-WebRequest\b.*\|.*\biex\b/i, // download & execute
+  /\bcertutil.*-urlcache/i,              // certutil download trick
+  /\btakeown\s+\/f\s+[cC]:\\/i,          // take ownership of system files
+  /\bcmdkey\b/i,                         // credential manager
+  /\bwmic\s+os\b.*\bdelete\b/i,          // WMI destructive
+];
+
+// Audit log
+const AUDIT_LOG = path.join(__dirname, 'audit.log');
+
+function auditLog(userId, action, detail = "") {
+  const ts = new Date().toISOString();
+  const line = `[${ts}] USER:${userId} ACTION:${action} ${detail}\n`;
+  fs.appendFileSync(AUDIT_LOG, line);
+}
+
+function isDangerousCommand(cmd) {
+  return DANGEROUS_PATTERNS.some(p => p.test(cmd));
+}
+
+function checkAutoLock() {
+  if (!CONFIG.sessionPin) return; // no PIN = no auto-lock
+  const elapsed = (Date.now() - lastActivityTime) / 1000 / 60;
+  if (elapsed >= CONFIG.autoLockMinutes && sessionUnlocked) {
+    sessionUnlocked = false;
+    console.log(`🔒 Auto-locked after ${CONFIG.autoLockMinutes}min inactivity`);
+    if (activeChatId) {
+      bot.sendMessage(activeChatId, `🔒 Auto-lock: ${CONFIG.autoLockMinutes} phút không hoạt động.\nGõ /unlock <PIN> để mở.`);
+    }
+  }
+}
+
+function touchActivity() {
+  lastActivityTime = Date.now();
+}
+
+// Check every minute for auto-lock
+setInterval(checkAutoLock, 60000);
 
 // CLI backends — switch with /cli command
 const CLI_BACKENDS = {
@@ -123,6 +191,8 @@ console.log(`   Gemini CLI: ${CONFIG.geminiCmd}`);
 console.log(`   Default workspace: ${CONFIG.defaultWorkspace}`);
 console.log(`   Workspaces: ${Object.keys(CONFIG.workspaces).join(", ") || "none"}`);
 console.log(`   Allowed users: ${CONFIG.allowedUsers.join(", ") || "ALL"}`);
+console.log(`   🛡️ PIN: ${CONFIG.sessionPin ? "enabled" : "⚠️ DISABLED"}`);
+console.log(`   🔒 Auto-lock: ${CONFIG.autoLockMinutes}min`);
 
 bot.setMyCommands([
   { command: "cd", description: "📁 Browse & chọn workspace" },
@@ -148,6 +218,88 @@ function isAllowed(userId) {
   return CONFIG.allowedUsers.includes(String(userId));
 }
 
+function isSessionActive(chatId, userId) {
+  // Check user ID first
+  if (!isAllowed(userId)) {
+    auditLog(userId, "BLOCKED", "unauthorized user");
+    return false;
+  }
+  // If no PIN configured, always active
+  if (!CONFIG.sessionPin) return true;
+  // Check lockout
+  if (Date.now() < lockoutUntil) {
+    const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000 / 60);
+    bot.sendMessage(chatId, `🔒 Tài khoản bị khóa. Thử lại sau ${remaining} phút.`);
+    auditLog(userId, "LOCKOUT_ACTIVE", `${remaining}min remaining`);
+    return false;
+  }
+  // Check session lock
+  if (!sessionUnlocked) {
+    bot.sendMessage(chatId, "🔒 Session bị khóa. Gõ `/unlock <PIN>` để mở.", { parse_mode: "Markdown" });
+    return false;
+  }
+  touchActivity();
+  return true;
+}
+
+// ── /unlock — PIN authentication ────────────────────────────────
+
+bot.onText(/\/unlock\s*(.*)/, (msg, match) => {
+  if (!isAllowed(msg.from.id)) return;
+  const pin = (match[1] || "").trim();
+
+  if (!CONFIG.sessionPin) {
+    return bot.sendMessage(msg.chat.id, "ℹ️ PIN chưa được cấu hình. Thêm SESSION_PIN vào .env");
+  }
+
+  // Check lockout
+  if (Date.now() < lockoutUntil) {
+    const remaining = Math.ceil((lockoutUntil - Date.now()) / 1000 / 60);
+    auditLog(msg.from.id, "UNLOCK_DURING_LOCKOUT", `${remaining}min remaining`);
+    return bot.sendMessage(msg.chat.id, `🔒 Bị khóa. Thử lại sau ${remaining} phút.`);
+  }
+
+  if (!pin) {
+    return bot.sendMessage(msg.chat.id, "❌ Thiếu PIN. Dùng: `/unlock <PIN>`", { parse_mode: "Markdown" });
+  }
+
+  // Constant-time comparison to prevent timing attacks
+  const pinBuffer = Buffer.from(pin);
+  const correctBuffer = Buffer.from(CONFIG.sessionPin);
+  const isCorrect = pinBuffer.length === correctBuffer.length &&
+    crypto.timingSafeEqual(pinBuffer, correctBuffer);
+
+  if (isCorrect) {
+    sessionUnlocked = true;
+    failedPinAttempts = 0;
+    touchActivity();
+    auditLog(msg.from.id, "UNLOCK_SUCCESS");
+    // Delete the message containing PIN for security
+    bot.deleteMessage(msg.chat.id, msg.message_id).catch(() => {});
+    bot.sendMessage(msg.chat.id, "🔓 Session đã mở! PIN đã bị xóa khỏi chat.");
+  } else {
+    failedPinAttempts++;
+    auditLog(msg.from.id, "UNLOCK_FAIL", `attempt ${failedPinAttempts}/${CONFIG.maxPinAttempts}`);
+    if (failedPinAttempts >= CONFIG.maxPinAttempts) {
+      lockoutUntil = Date.now() + CONFIG.lockoutMinutes * 60 * 1000;
+      failedPinAttempts = 0;
+      bot.sendMessage(msg.chat.id, `🚨 SAI PIN ${CONFIG.maxPinAttempts} lần! Khóa ${CONFIG.lockoutMinutes} phút.`);
+      auditLog(msg.from.id, "LOCKOUT_TRIGGERED", `${CONFIG.lockoutMinutes}min`);
+    } else {
+      bot.sendMessage(msg.chat.id, `❌ Sai PIN (${failedPinAttempts}/${CONFIG.maxPinAttempts})`);
+    }
+  }
+});
+
+// ── /lock — manually lock session ───────────────────────────────
+
+bot.onText(/\/lock/, (msg) => {
+  if (!isAllowed(msg.from.id)) return;
+  sessionUnlocked = false;
+  auditLog(msg.from.id, "MANUAL_LOCK");
+  bot.sendMessage(msg.chat.id, "🔒 Session đã khóa. Dùng /unlock <PIN> để mở lại.");
+});
+
 // ── /start ──────────────────────────────────────────────────────
 
 bot.onText(/\/start/, (msg) => {
@@ -155,12 +307,17 @@ bot.onText(/\/start/, (msg) => {
   const name = msg.from.first_name || "bạn";
   const shortcuts = Object.entries(CONFIG.workspaces).map(([k, v]) => `  /${k} → ${v.replace(/([_*`\[])/g, '\\$1')}`).join("\n");
 
+  const lockStatus = CONFIG.sessionPin
+    ? (sessionUnlocked ? "🔓 Đã mở" : "🔒 Đang khóa — dùng /unlock")
+    : "⚠️ Chưa cài PIN";
+
   const cli = CLI_BACKENDS[activeCli];
   bot.sendMessage(msg.chat.id,
     `👋 Chào ${name}!\n\n` +
     `📂 *Workspace:* \`${currentWorkspace}\`\n` +
     `🔧 *CLI:* ${cli.name}\n` +
-    `🧠 *Session:* ${hasSession ? "đang tiếp tục" : "chưa bắt đầu"}\n\n` +
+    `🧠 *Session:* ${hasSession ? "đang tiếp tục" : "chưa bắt đầu"}\n` +
+    `🛡️ *Bảo mật:* ${lockStatus}\n\n` +
     `*Cách dùng:*\n` +
     `• Gõ bình thường → AI nhớ ngữ cảnh trước đó\n` +
     `• /cd → browse chọn workspace\n` +
@@ -565,8 +722,14 @@ bot.onText(/\/file\s+(.+)/, async (msg, match) => {
 
 // /run <command> — execute shell command
 bot.onText(/\/run\s+(.+)/s, async (msg, match) => {
-  if (!isAllowed(msg.from.id)) return;
+  if (!isSessionActive(msg.chat.id, msg.from.id)) return;
   const command = match[1].trim();
+  // Block dangerous commands
+  if (isDangerousCommand(command)) {
+    auditLog(msg.from.id, "BLOCKED_DANGEROUS", command);
+    return bot.sendMessage(msg.chat.id, `🚨 *BLOCKED* — Lệnh nguy hiểm bị chặn:\n\`${command.substring(0,60)}\``, { parse_mode: "Markdown" });
+  }
+  auditLog(msg.from.id, "RUN", command.substring(0, 200));
   const statusMsg = await bot.sendMessage(msg.chat.id, `⚡ Đang chạy...\n\`${command.substring(0,60)}\``, { parse_mode: "Markdown" });
   try {
     const result = await execPromise(command, { cwd: currentWorkspace, timeout: 60000 });
@@ -585,8 +748,9 @@ bot.onText(/\/run\s+(.+)/s, async (msg, match) => {
 
 // /py <code> — run Python code
 bot.onText(/\/py\s+(.+)/s, async (msg, match) => {
-  if (!isAllowed(msg.from.id)) return;
+  if (!isSessionActive(msg.chat.id, msg.from.id)) return;
   const code = match[1].trim();
+  auditLog(msg.from.id, "PY", code.substring(0, 200));
   const statusMsg = await bot.sendMessage(msg.chat.id, `🐍 Đang chạy Python...`);
   try {
     const escaped = code.replace(/"/g, '\\"');
@@ -669,11 +833,13 @@ bot.onText(/\/cat\s+(.+)/, async (msg, match) => {
 
 // ── Main message handler ────────────────────────────────────────
 
-const SKIP_COMMANDS = ["/start", "/stop", "/status", "/cd", "/pwd", "/new", "/cli", "/file", "/run", "/py", "/screen", "/web", "/ls", "/cat", "/get"];
+const SKIP_COMMANDS = ["/start", "/stop", "/status", "/cd", "/pwd", "/new", "/cli", "/file", "/run", "/py", "/screen", "/web", "/ls", "/cat", "/get", "/unlock", "/lock"];
 
 bot.on("message", async (msg) => {
   if (!msg.text && !msg.photo && !msg.document) return;
   let promptText = msg.text || msg.caption || "";
+  // Session lock check for main message handler
+  if (!SKIP_COMMANDS.some(cmd => promptText.startsWith(cmd)) && !isSessionActive(msg.chat.id, msg.from?.id)) return;
   if (SKIP_COMMANDS.some(cmd => promptText.startsWith(cmd))) return;
 
   const chatId = msg.chat.id;
