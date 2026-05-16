@@ -541,7 +541,8 @@ export async function getUsageStats(period = "all") {
     : history.length;
 
   const stats = {
-    totalRequests: lifetimeTotalRequests,
+    totalRequests: 0,
+    lifetimeTotalRequests,
     totalPromptTokens: 0, totalCompletionTokens: 0, totalCost: 0,
     byProvider: {}, byModel: {}, byAccount: {}, byApiKey: {}, byEndpoint: {},
     last10Minutes: [],
@@ -609,6 +610,7 @@ export async function getUsageStats(period = "all") {
 
     for (const dateKey of dateKeys) {
       const day = dailySummary[dateKey];
+      stats.totalRequests += day.requests || 0;
       stats.totalPromptTokens += day.promptTokens || 0;
       stats.totalCompletionTokens += day.completionTokens || 0;
       stats.totalCost += day.cost || 0;
@@ -734,6 +736,7 @@ export async function getUsageStats(period = "all") {
       const entryCost = entry.cost || 0;
       const providerDisplayName = providerNodeNameMap[entry.provider] || entry.provider;
 
+      stats.totalRequests++;
       stats.totalPromptTokens += promptTokens;
       stats.totalCompletionTokens += completionTokens;
       stats.totalCost += entryCost;
