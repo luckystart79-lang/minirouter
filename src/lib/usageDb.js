@@ -805,6 +805,11 @@ export async function getUsageStats(period = "all") {
     }
   }
 
+  // Compute avg tokens per day
+  const periodDaysMap = { "today": 1, "24h": 1, "7d": 7, "30d": 30, "60d": 60 };
+  const days = periodDaysMap[period] || 1;
+  stats.avgTokensPerDay = days > 0 ? Math.round((stats.totalPromptTokens + stats.totalCompletionTokens) / days) : 0;
+
   return stats;
 }
 

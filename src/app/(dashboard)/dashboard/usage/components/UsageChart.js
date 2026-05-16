@@ -22,14 +22,31 @@ const fmtTokens = (n) => {
 
 const fmtNumber = (n) => new Intl.NumberFormat("vi-VN").format(n || 0);
 
+const GROUP_OPTIONS = [
+  { value: "hour", label: "Giờ" },
+  { value: "day", label: "Ngày" },
+  { value: "week", label: "Tuần" },
+  { value: "month", label: "Tháng" },
+];
+
 export default function UsageChart({ period = "7d" }) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [groupBy, setGroupBy] = useState(() => {
+    if (period === "today" || period === "24h") return "hour";
+    return "day";
+  });
+
+  // Reset groupBy when period changes
+  useEffect(() => {
+    if (period === "today" || period === "24h") setGroupBy("hour");
+    else setGroupBy("day");
+  }, [period]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/usage/chart?period=${period}`);
+      const res = await fetch(`/api/usage/chart?period=${period}&groupBy=${groupBy}`);
       if (res.ok) {
         const json = await res.json();
         setData(json);
@@ -39,7 +56,7 @@ export default function UsageChart({ period = "7d" }) {
     } finally {
       setLoading(false);
     }
-  }, [period]);
+  }, [period, groupBy]);
 
   useEffect(() => {
     fetchData();
@@ -109,7 +126,6 @@ export default function UsageChart({ period = "7d" }) {
               axisLine={false}
               interval="preserveStartEnd"
             />
-            {/* Left Y-axis: Tokens */}
             <YAxis
               yAxisId="tokens"
               orientation="left"
@@ -119,7 +135,6 @@ export default function UsageChart({ period = "7d" }) {
               tickFormatter={fmtTokens}
               width={55}
             />
-            {/* Right Y-axis: Requests */}
             <YAxis
               yAxisId="requests"
               orientation="right"
@@ -161,6 +176,26 @@ export default function UsageChart({ period = "7d" }) {
           </AreaChart>
         </ResponsiveContainer>
       )}
+
+      {/* GroupBy selector - below chart */}
+      <div className="flex items-center gap-2 self-end">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-text-muted">Xem theo</span>
+        <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-subtle p-0.5">
+          {GROUP_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setGroupBy(opt.value)}
+              className={`rounded-md px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                groupBy === opt.value
+                  ? "bg-primary text-white shadow-sm"
+                  : "text-text-muted hover:text-text hover:bg-bg-hover"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
     </Card>
   );
 }

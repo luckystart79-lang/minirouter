@@ -17,6 +17,15 @@ import UsageTable, { fmt, fmtTime } from "@/app/(dashboard)/dashboard/usage/comp
 import ProviderTopology from "@/app/(dashboard)/dashboard/usage/components/ProviderTopology";
 import UsageChart from "@/app/(dashboard)/dashboard/usage/components/UsageChart";
 
+function getPeriodDateRange(period) {
+  const now = new Date();
+  const days = period === "24h" || period === "today" ? 1 : period === "7d" ? 7 : period === "30d" ? 30 : 60;
+  const start = new Date(now);
+  start.setDate(start.getDate() - days);
+  const f = (d) => d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return `${f(start)} đến ${f(now)}`;
+}
+
 function timeAgo(timestamp) {
   const diff = Math.floor((Date.now() - new Date(timestamp)) / 1000);
   if (diff < 60) return `${diff}s ago`;
@@ -412,27 +421,30 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     <div className="flex min-w-0 flex-col gap-6">
       {/* Period selector (hidden when controlled by parent) */}
       {!hidePeriodSelector && (
-        <div className="flex w-full items-center gap-2 sm:w-auto sm:self-end">
-          <div className="grid flex-1 grid-cols-5 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex sm:flex-none">
-            {PERIODS.map((p) => (
-              <button
-                key={p.value}
-                onClick={() => setPeriod(p.value)}
-                disabled={fetching}
-                className={`rounded-md px-3 py-1 text-sm font-medium transition-colors ${period === p.value ? "bg-primary text-white shadow-sm" : "text-text-muted hover:bg-bg-hover hover:text-text"}`}
-              >
-                {p.label}
-              </button>
-            ))}
+        <div className="flex w-full flex-col gap-1 sm:items-end">
+          <div className="flex items-center gap-2">
+            <div className="grid flex-1 grid-cols-5 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex sm:flex-none">
+              {PERIODS.map((p) => (
+                <button
+                  key={p.value}
+                  onClick={() => setPeriod(p.value)}
+                  disabled={fetching}
+                  className={`rounded-md px-3 py-1 text-sm font-medium transition-colors ${period === p.value ? "bg-primary text-white shadow-sm" : "text-text-muted hover:bg-bg-hover hover:text-text"}`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            {fetching && (
+              <span className="material-symbols-outlined text-[16px] text-text-muted animate-spin">progress_activity</span>
+            )}
           </div>
-          {fetching && (
-            <span className="material-symbols-outlined text-[16px] text-text-muted animate-spin">progress_activity</span>
-          )}
+          <span className="text-[11px] text-text-muted">{getPeriodDateRange(period)}</span>
         </div>
       )}
 
       {/* Overview cards */}
-      {loading ? spinner : <OverviewCards stats={stats} period={period} />}
+      {loading ? spinner : <OverviewCards stats={stats} />}
 
       {/* Token / Cost chart - sync period */}
       {loading ? spinner : <UsageChart period={period} />}
