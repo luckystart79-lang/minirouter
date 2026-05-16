@@ -22,13 +22,6 @@ const fmtTokens = (n) => {
 
 const fmtNumber = (n) => new Intl.NumberFormat("vi-VN").format(n || 0);
 
-const GROUP_OPTIONS = [
-  { value: "hour", label: "Giờ" },
-  { value: "day", label: "Ngày" },
-  { value: "week", label: "Tuần" },
-  { value: "month", label: "Tháng" },
-];
-
 function getPeriodLabel(period) {
   const now = new Date();
   const days = period === "24h" || period === "today" ? 1 : period === "7d" ? 7 : period === "30d" ? 30 : 60;
@@ -41,21 +34,11 @@ function getPeriodLabel(period) {
 export default function UsageChart({ period = "7d" }) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [groupBy, setGroupBy] = useState(() => {
-    if (period === "today" || period === "24h") return "hour";
-    return "day";
-  });
-
-  // Update groupBy when period changes
-  useEffect(() => {
-    if (period === "today" || period === "24h") setGroupBy("hour");
-    else setGroupBy("day");
-  }, [period]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/usage/chart?period=${period}&groupBy=${groupBy}`);
+      const res = await fetch(`/api/usage/chart?period=${period}`);
       if (res.ok) {
         const json = await res.json();
         setData(json);
@@ -65,13 +48,13 @@ export default function UsageChart({ period = "7d" }) {
     } finally {
       setLoading(false);
     }
-  }, [period, groupBy]);
+  }, [period]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // Compute summary stats from chart data
+  // Summary stats from chart data
   const summary = useMemo(() => {
     const totalTokens = data.reduce((sum, d) => sum + (d.tokens || 0), 0);
     const totalRequests = data.reduce((sum, d) => sum + (d.requests || 0), 0);
@@ -110,50 +93,28 @@ export default function UsageChart({ period = "7d" }) {
 
   return (
     <Card className="flex min-w-0 flex-col gap-4 p-4 sm:p-5">
-      {/* Header: Title + Summary Cards */}
-      <div className="flex flex-col gap-3">
-        <h3 className="text-base font-semibold" style={{ color: "var(--color-text, #e0e0e0)" }}>
-          Biểu đồ sử dụng theo thời gian
-        </h3>
+      {/* Title */}
+      <h3 className="text-sm font-semibold" style={{ color: "var(--color-text, #e0e0e0)" }}>
+        Biểu đồ sử dụng theo thời gian
+      </h3>
 
-        {/* Summary cards row */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-          <div className="rounded-lg border border-border bg-bg-subtle/40 px-3 py-2.5">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Tổng Tokens</div>
-            <div className="mt-1 text-lg font-bold" style={{ color: "var(--color-text, #e0e0e0)" }}>{fmtNumber(summary.totalTokens)}</div>
-          </div>
-          <div className="rounded-lg border border-border bg-bg-subtle/40 px-3 py-2.5">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Tổng Requests</div>
-            <div className="mt-1 text-lg font-bold" style={{ color: "var(--color-text, #e0e0e0)" }}>{fmtNumber(summary.totalRequests)}</div>
-          </div>
-          <div className="rounded-lg border border-border bg-bg-subtle/40 px-3 py-2.5">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Trung bình/ngày</div>
-            <div className="mt-1 text-lg font-bold" style={{ color: "var(--color-text, #e0e0e0)" }}>{fmtNumber(summary.avgPerDay)}</div>
-          </div>
-          <div className="rounded-lg border border-border bg-bg-subtle/40 px-3 py-2.5">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Khoảng thời gian</div>
-            <div className="mt-1 text-xs font-medium" style={{ color: "var(--color-text-muted, #888)" }}>{getPeriodLabel(period)}</div>
-          </div>
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+        <div className="rounded-lg border border-border bg-bg-subtle/40 px-3 py-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Tổng Tokens</div>
+          <div className="mt-1 text-lg font-bold" style={{ color: "var(--color-text, #e0e0e0)" }}>{fmtNumber(summary.totalTokens)}</div>
         </div>
-      </div>
-
-      {/* GroupBy selector */}
-      <div className="flex items-center gap-3">
-        <span className="text-xs font-medium uppercase tracking-wider text-text-muted">Xem theo</span>
-        <div className="grid grid-cols-4 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1">
-          {GROUP_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setGroupBy(opt.value)}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                groupBy === opt.value
-                  ? "bg-primary text-white shadow-sm"
-                  : "text-text-muted hover:text-text hover:bg-bg-hover"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
+        <div className="rounded-lg border border-border bg-bg-subtle/40 px-3 py-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Tổng Requests</div>
+          <div className="mt-1 text-lg font-bold" style={{ color: "var(--color-text, #e0e0e0)" }}>{fmtNumber(summary.totalRequests)}</div>
+        </div>
+        <div className="rounded-lg border border-border bg-bg-subtle/40 px-3 py-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Trung bình/ngày</div>
+          <div className="mt-1 text-lg font-bold" style={{ color: "var(--color-text, #e0e0e0)" }}>{fmtNumber(summary.avgPerDay)}</div>
+        </div>
+        <div className="rounded-lg border border-border bg-bg-subtle/40 px-3 py-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Khoảng thời gian</div>
+          <div className="mt-1 text-xs font-medium" style={{ color: "var(--color-text-muted, #888)" }}>{getPeriodLabel(period)}</div>
         </div>
       </div>
 
