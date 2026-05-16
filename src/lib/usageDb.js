@@ -597,8 +597,8 @@ export async function getUsageStats(period = "all") {
 
   if (useDailySummary) {
     // Collect relevant date keys
-    const periodDays = { "7d": 7, "30d": 30, "60d": 60 };
-    const maxDays = periodDays[period] || null; // null = all
+    const periodDays = { "today": 1, "7d": 7, "30d": 30, "60d": 60 };
+    const maxDays = period === "all" ? null : (periodDays[period] || null); // null = all
     const today = new Date();
     const dateKeys = Object.keys(dailySummary).filter((dateKey) => {
       if (!maxDays) return true;
@@ -807,7 +807,11 @@ export async function getUsageStats(period = "all") {
 
   // Compute avg tokens per day
   const periodDaysMap = { "today": 1, "24h": 1, "7d": 7, "30d": 30, "60d": 60 };
-  const days = periodDaysMap[period] || 1;
+  let days = periodDaysMap[period] || 1;
+  if (period === "all") {
+    const summaryKeys = Object.keys(dailySummary);
+    days = Math.max(summaryKeys.length, 1);
+  }
   stats.avgTokensPerDay = days > 0 ? Math.round((stats.totalPromptTokens + stats.totalCompletionTokens) / days) : 0;
 
   return stats;
@@ -828,6 +832,7 @@ export async function getChartData(period = "7d", groupBy = null) {
   // Auto-determine groupBy if not specified
   if (!groupBy) {
     if (period === "today" || period === "24h") groupBy = "hour";
+    else if (period === "all") groupBy = "month";
     else groupBy = "day";
   }
 
@@ -864,7 +869,17 @@ export async function getChartData(period = "7d", groupBy = null) {
 
   // === GROUP BY DAY (from dailySummary) ===
   if (groupBy === "day") {
-    const bucketCount = period === "today" || period === "24h" ? 1 : period === "7d" ? 7 : period === "30d" ? 30 : 60;
+    let bucketCount;
+    if (period === "all") {
+      // Show all days from dailySummary
+      const keys = Object.keys(dailySummary).sort();
+      if (keys.length === 0) return [];
+      const first = new Date(keys[0]);
+      const last = new Date();
+      bucketCount = Math.ceil((last - first) / 86400000) + 1;
+    } else {
+      bucketCount = period === "today" || period === "24h" ? 1 : period === "7d" ? 7 : period === "30d" ? 30 : 60;
+    }
     const today = new Date();
     const labelFn = (d) => d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" });
 
@@ -886,7 +901,12 @@ export async function getChartData(period = "7d", groupBy = null) {
 
   // === GROUP BY WEEK ===
   if (groupBy === "week") {
-    const totalDays = period === "7d" ? 7 : period === "30d" ? 30 : 60;
+    let totalDays = period === "7d" ? 7 : period === "30d" ? 30 : 60;
+    if (period === "all") {
+      const keys = Object.keys(dailySummary).sort();
+      if (keys.length === 0) return [];
+      totalDays = Math.ceil((Date.now() - new Date(keys[0]).getTime()) / 86400000) + 1;
+    }
     const weekCount = Math.ceil(totalDays / 7);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -917,7 +937,12 @@ export async function getChartData(period = "7d", groupBy = null) {
 
   // === GROUP BY MONTH ===
   if (groupBy === "month") {
-    const totalDays = period === "7d" ? 7 : period === "30d" ? 30 : 60;
+    let totalDays = period === "7d" ? 7 : period === "30d" ? 30 : 60;
+    if (period === "all") {
+      const keys = Object.keys(dailySummary).sort();
+      if (keys.length === 0) return [];
+      totalDays = Math.ceil((Date.now() - new Date(keys[0]).getTime()) / 86400000) + 1;
+    }
     const today = new Date();
     const startDate = new Date(today);
     startDate.setDate(startDate.getDate() - totalDays);

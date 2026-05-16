@@ -18,6 +18,7 @@ import ProviderTopology from "@/app/(dashboard)/dashboard/usage/components/Provi
 import UsageChart from "@/app/(dashboard)/dashboard/usage/components/UsageChart";
 
 function getPeriodDateRange(period) {
+  if (period === "all") return "Toàn bộ thời gian";
   const now = new Date();
   const days = period === "24h" || period === "today" ? 1 : period === "7d" ? 7 : period === "30d" ? 30 : 60;
   const start = new Date(now);
@@ -196,6 +197,7 @@ const PERIODS = [
   { value: "7d", label: "7D" },
   { value: "30d", label: "30D" },
   { value: "60d", label: "60D" },
+  { value: "all", label: "All" },
 ];
 
 export default function UsageStats({ period: periodProp, setPeriod: setPeriodProp, hidePeriodSelector = false } = {}) {
@@ -211,7 +213,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const [tableView, setTableView] = useState("model");
   const [viewMode, setViewMode] = useState("costs");
   const [providers, setProviders] = useState([]);
-  const [periodLocal, setPeriodLocal] = useState("7d");
+  const [periodLocal, setPeriodLocal] = useState("today");
   const period = periodProp ?? periodLocal;
   const setPeriod = setPeriodProp ?? setPeriodLocal;
 
@@ -423,7 +425,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       {!hidePeriodSelector && (
         <div className="flex w-full flex-col gap-1 sm:items-end">
           <div className="flex items-center gap-2">
-            <div className="grid flex-1 grid-cols-5 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex sm:flex-none">
+            <div className="grid flex-1 grid-cols-6 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex sm:flex-none">
               {PERIODS.map((p) => (
                 <button
                   key={p.value}
