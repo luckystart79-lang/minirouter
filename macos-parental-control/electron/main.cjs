@@ -77,7 +77,7 @@ app.whenReady().then(() => {
 });
 
 // --- Cross-Platform Activity Monitoring --- //
-ipcMain.handle('check-active-apps', async () => {
+ipcMain.handle('check-active-apps', async (event, monitoredApps = []) => {
   return new Promise((resolve) => {
     const isWin = process.platform === 'win32';
     const command = isWin ? 'tasklist' : 'ps -ax';
@@ -91,10 +91,9 @@ ipcMain.handle('check-active-apps', async () => {
       
       const apps = [];
       const lowerOut = stdout.toLowerCase();
-      if (lowerOut.includes('roblox')) apps.push('roblox');
-      if (lowerOut.includes('steam')) apps.push('steam');
-      if (lowerOut.includes('chrome')) apps.push('chrome');
-      if (lowerOut.includes('safari')) apps.push('safari');
+      monitoredApps.forEach(app => {
+        if (lowerOut.includes(app.toLowerCase())) apps.push(app);
+      });
       
       resolve(apps);
     });
