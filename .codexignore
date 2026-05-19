@@ -1,0 +1,38 @@
+# === Build & Output ===
+.next/
+dist/
+build/
+out/
+.output/
+.nuxt/
+.turbo/
+
+# === Dependencies (Codex already ignores, but just in case) ===
+node_modules/
+.pnp/
+.yarn/
+
+# === Data & Logs ===
+data/
+*.log
+*.sqlite
+*.db
+
+# === IDE & Config ===
+.vscode/
+.idea/
+.git/
+
+# === Large/Binary files ===
+*.vhdx
+*.iso
+*.zip
+*.tar.gz
+*.mp4
+*.mov
+*.pdf
+
+# === Misc ===
+coverage/
+.cache/
+tmp/
