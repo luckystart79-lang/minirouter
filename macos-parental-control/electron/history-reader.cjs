@@ -4,61 +4,107 @@
  * Reads ALL visited URLs directly from browser SQLite History files.
  * No extension, no shortcut modification, no browser restart needed.
  * 
- * The kid CANNOT hide from this — browsers always write to History.
- * Even if they delete history, we capture it in real-time.
+ * BONUS: Chrome Sync means we also see history from OTHER DEVICES
+ * logged into the same Google account! Remote monitoring for free.
+ * 
+ * Scans ALL browser profiles (multiple Gmail accounts).
  */
 
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-// Browser profile paths (Windows / macOS)
-function getBrowserPaths() {
+// Find all Chrome profiles in a User Data directory
+function findProfiles(userDataDir) {
+  if (!fs.existsSync(userDataDir)) return [];
+  
+  const profiles = [];
+  try {
+    const entries = fs.readdirSync(userDataDir);
+    for (const entry of entries) {
+      // Chrome profiles: "Default", "Profile 1", "Profile 2", etc.
+      if (entry === 'Default' || entry.startsWith('Profile')) {
+        const historyFile = path.join(userDataDir, entry, 'History');
+        if (fs.existsSync(historyFile)) {
+          // Try to read profile name from Preferences
+          let profileName = entry;
+          try {
+            const prefsFile = path.join(userDataDir, entry, 'Preferences');
+            if (fs.existsSync(prefsFile)) {
+              const prefs = JSON.parse(fs.readFileSync(prefsFile, 'utf8'));
+              const name = prefs?.profile?.name;
+              const email = prefs?.account_info?.[0]?.email;
+              if (name) profileName = name;
+              if (email) profileName += ` (${email})`;
+            }
+          } catch(e) { /* ignore */ }
+          
+          profiles.push({
+            profileDir: entry,
+            profileName,
+            historyPath: historyFile
+          });
+        }
+      }
+    }
+  } catch(e) { /* ignore */ }
+  return profiles;
+}
+
+// Browser User Data directories (Windows / macOS)
+function getAllBrowserProfiles() {
   const home = os.homedir();
   const isWin = process.platform === 'win32';
+  const result = [];
 
-  if (isWin) {
-    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
-    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
-    return [
-      { name: 'Google Chrome', path: path.join(localAppData, 'Google', 'Chrome', 'User Data', 'Default', 'History') },
-      { name: 'Microsoft Edge', path: path.join(localAppData, 'Microsoft', 'Edge', 'User Data', 'Default', 'History') },
-      { name: 'Brave', path: path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data', 'Default', 'History') },
-      { name: 'Opera', path: path.join(appData, 'Opera Software', 'Opera Stable', 'History') },
-      { name: 'Vivaldi', path: path.join(localAppData, 'Vivaldi', 'User Data', 'Default', 'History') },
-      { name: 'Coc Coc', path: path.join(localAppData, 'CocCoc', 'Browser', 'User Data', 'Default', 'History') },
-    ];
-  } else {
-    // macOS
-    const appSupport = path.join(home, 'Library', 'Application Support');
-    return [
-      { name: 'Google Chrome', path: path.join(appSupport, 'Google', 'Chrome', 'Default', 'History') },
-      { name: 'Microsoft Edge', path: path.join(appSupport, 'Microsoft Edge', 'Default', 'History') },
-      { name: 'Brave', path: path.join(appSupport, 'BraveSoftware', 'Brave-Browser', 'Default', 'History') },
-      { name: 'Opera', path: path.join(appSupport, 'com.operasoftware.Opera', 'History') },
-      { name: 'Vivaldi', path: path.join(appSupport, 'Vivaldi', 'Default', 'History') },
-    ];
+  const browsers = isWin ? [
+    { name: 'Google Chrome', dir: path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'User Data') },
+    { name: 'Microsoft Edge', dir: path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'Edge', 'User Data') },
+    { name: 'Brave', dir: path.join(process.env.LOCALAPPDATA || '', 'BraveSoftware', 'Brave-Browser', 'User Data') },
+    { name: 'Opera', dir: path.join(process.env.APPDATA || '', 'Opera Software', 'Opera Stable') },
+    { name: 'Vivaldi', dir: path.join(process.env.LOCALAPPDATA || '', 'Vivaldi', 'User Data') },
+    { name: 'Coc Coc', dir: path.join(process.env.LOCALAPPDATA || '', 'CocCoc', 'Browser', 'User Data') },
+  ] : [
+    { name: 'Google Chrome', dir: path.join(home, 'Library', 'Application Support', 'Google', 'Chrome') },
+    { name: 'Microsoft Edge', dir: path.join(home, 'Library', 'Application Support', 'Microsoft Edge') },
+    { name: 'Brave', dir: path.join(home, 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser') },
+    { name: 'Opera', dir: path.join(home, 'Library', 'Application Support', 'com.operasoftware.Opera') },
+    { name: 'Vivaldi', dir: path.join(home, 'Library', 'Application Support', 'Vivaldi') },
+  ];
+
+  for (const browser of browsers) {
+    // Opera doesn't use profile folders like Chrome
+    if (browser.name === 'Opera') {
+      const historyFile = path.join(browser.dir, 'History');
+      if (fs.existsSync(historyFile)) {
+        result.push({ browser: browser.name, profileName: 'Default', historyPath: historyFile });
+      }
+    } else {
+      const profiles = findProfiles(browser.dir);
+      profiles.forEach(p => {
+        result.push({ browser: browser.name, profileName: p.profileName, historyPath: p.historyPath });
+      });
+    }
   }
+
+  return result;
 }
 
 /**
- * Read recent history from a single browser's SQLite file
- * Chrome locks the file while running, so we copy it first
+ * Read recent history from a single browser profile's SQLite file
  */
-async function readBrowserHistory(browserInfo, minutesBack = 30) {
-  const { name, path: historyPath } = browserInfo;
+async function readProfileHistory(profileInfo, minutesBack = 30) {
+  const { browser, profileName, historyPath } = profileInfo;
 
-  if (!fs.existsSync(historyPath)) return null;
-
-  // Copy the file because Chrome locks it
+  // Copy the file because browser locks it
   const tmpDir = path.join(os.tmpdir(), 'parental-control');
   if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-  const tmpFile = path.join(tmpDir, `${name.replace(/\s+/g, '_')}_History`);
+  const safeName = `${browser}_${profileName}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const tmpFile = path.join(tmpDir, `${safeName}_History`);
 
   try {
     fs.copyFileSync(historyPath, tmpFile);
   } catch (e) {
-    // File might be locked — try reading the copy from last time
     if (!fs.existsSync(tmpFile)) return null;
   }
 
@@ -68,8 +114,7 @@ async function readBrowserHistory(browserInfo, minutesBack = 30) {
     const buffer = fs.readFileSync(tmpFile);
     const db = new SQL.Database(buffer);
 
-    // Chrome stores timestamps as microseconds since Jan 1, 1601
-    // Convert to JS epoch: subtract 11644473600 seconds, divide by 1000000
+    // Chrome timestamps: microseconds since Jan 1, 1601
     const chromeEpochOffset = 11644473600000000n;
     const nowMicro = BigInt(Date.now()) * 1000n + chromeEpochOffset;
     const cutoffMicro = nowMicro - BigInt(minutesBack * 60) * 1000000n;
@@ -79,7 +124,7 @@ async function readBrowserHistory(browserInfo, minutesBack = 30) {
       FROM urls
       WHERE last_visit_time > ${cutoffMicro.toString()}
       ORDER BY last_visit_time DESC
-      LIMIT 50
+      LIMIT 100
     `);
 
     db.close();
@@ -89,33 +134,38 @@ async function readBrowserHistory(browserInfo, minutesBack = 30) {
     const entries = results[0].values.map(row => ({
       url: row[0],
       title: row[1] || '',
-      lastVisit: Number((BigInt(row[2]) - chromeEpochOffset) / 1000n), // JS timestamp
+      lastVisit: Number((BigInt(row[2]) - chromeEpochOffset) / 1000n),
       visitCount: row[3],
-      browser: name
+      browser,
+      profile: profileName
     }));
 
-    return { browser: name, entries };
+    return entries;
   } catch (e) {
-    console.error(`[HistoryReader] Error reading ${name}:`, e.message);
+    console.error(`[HistoryReader] Error reading ${browser}/${profileName}:`, e.message);
     return null;
   }
 }
 
 /**
- * Scan ALL browsers and return recent history
+ * Scan ALL browsers, ALL profiles, return recent history
  */
 async function scanAllBrowserHistory(minutesBack = 30) {
-  const browsers = getBrowserPaths();
+  const allProfiles = getAllBrowserProfiles();
   const results = {};
 
-  for (const browser of browsers) {
-    const data = await readBrowserHistory(browser, minutesBack);
-    if (data && data.entries.length > 0) {
-      results[data.browser] = data.entries;
+  for (const profile of allProfiles) {
+    const key = profile.profileName !== 'Default' 
+      ? `${profile.browser} — ${profile.profileName}`
+      : profile.browser;
+    
+    const entries = await readProfileHistory(profile, minutesBack);
+    if (entries && entries.length > 0) {
+      results[key] = entries;
     }
   }
 
   return results;
 }
 
-module.exports = { scanAllBrowserHistory, getBrowserPaths };
+module.exports = { scanAllBrowserHistory, getAllBrowserProfiles };
