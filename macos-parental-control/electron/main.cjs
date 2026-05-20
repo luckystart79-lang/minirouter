@@ -79,14 +79,22 @@ ipcMain.handle('get-extension-tabs', () => {
   return result;
 });
 
-// IPC: read browser history directly from SQLite files (no extension, no restart!)
+// IPC: scan browser history AND analyze content safety in one call
 ipcMain.handle('scan-browser-history', async () => {
-  return await scanAllBrowserHistory(30); // last 30 minutes
-});
-
-// IPC: analyze content safety of history entries
-ipcMain.handle('analyze-content', async (_, entries) => {
-  return await analyzeHistory(entries, 20); // max 20 YouTube lookups per scan
+  try {
+    const history = await scanAllBrowserHistory(30);
+    // Flatten all entries for analysis
+    const allEntries = [];
+    for (const [browser, entries] of Object.entries(history)) {
+      entries.forEach(e => allEntries.push(e));
+    }
+    // Analyze content safety
+    const analyzed = await analyzeHistory(allEntries, 15);
+    return { history, analyzed };
+  } catch(e) {
+    console.error('[Main] History scan error:', e.message);
+    return { history: {}, analyzed: [] };
+  }
 });
 
 // --- Watchdog PID Management ---
