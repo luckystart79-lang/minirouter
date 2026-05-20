@@ -338,7 +338,9 @@ ipcMain.handle('check-browser-activity', async () => {
       const scriptPath = path.join(__dirname, 'get-window-titles.ps1');
       command = `cmd /c "chcp 65001 >nul & powershell -ExecutionPolicy Bypass -File "${scriptPath}""`;
     } else {
-      command = `osascript -e 'tell application "System Events" to get name of every window of every process'`;
+      // macOS: use dedicated shell script with AppleScript
+      const scriptPath = path.join(__dirname, 'get-window-titles.sh');
+      command = `bash "${scriptPath}"`;
     }
 
     exec(command, { timeout: 10000, encoding: 'utf8' }, (error, stdout) => {
