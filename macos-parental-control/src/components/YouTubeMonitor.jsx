@@ -77,6 +77,11 @@ export default function BrowserMonitor() {
         )}
       </div>
 
+      {/* Limitation note */}
+      <div style={{ background: '#fef9e7', border: '1px solid #f9e79f', padding: '8px 12px', borderRadius: 6, marginBottom: 15, fontSize: '0.8rem', color: '#7d6608' }}>
+        ⚠️ <strong>Note:</strong> Only the <em>active tab</em> per browser window is visible. Hidden tabs require a Browser Extension (Phase 2).
+      </div>
+
       {/* Active Browsers with Tabs */}
       {Object.keys(byBrowser).length > 0 && (
         <div style={{ marginBottom: 20 }}>
