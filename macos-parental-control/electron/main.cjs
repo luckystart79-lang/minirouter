@@ -15,8 +15,21 @@ let extensionTabData = {};  // keyed by browser name
 
 // HTTP server to receive tab reports from browser extensions
 const TAB_SERVER_PORT = 7700;
+
+// Kill any old process on our port BEFORE we try to listen
+const { execSync } = require('child_process');
+if (process.platform === 'win32') {
+  try {
+    const out = execSync(`netstat -aon | findstr ":${TAB_SERVER_PORT}"`, { encoding: 'utf8', timeout: 3000 });
+    const match = out.match(/LISTENING\s+(\d+)/);
+    if (match) {
+      try { execSync(`taskkill /F /PID ${match[1]}`, { timeout: 3000 }); } catch(e) {}
+      console.log(`[Main] Killed old process on port ${TAB_SERVER_PORT} (PID ${match[1]})`);
+    }
+  } catch(e) { /* port is free, good */ }
+}
+
 const tabServer = http.createServer((req, res) => {
-  // CORS headers so extensions can POST
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -45,25 +58,6 @@ const tabServer = http.createServer((req, res) => {
   } else {
     res.writeHead(404);
     res.end();
-  }
-});
-
-tabServer.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.log(`[Main] Port ${TAB_SERVER_PORT} in use, killing old process...`);
-    // Kill the process holding the port, then retry
-    const isWin = process.platform === 'win32';
-    if (isWin) {
-      exec(`for /f "tokens=5" %a in ('netstat -aon ^| findstr :${TAB_SERVER_PORT}') do taskkill /F /PID %a`, () => {
-        setTimeout(() => {
-          tabServer.listen(TAB_SERVER_PORT, '127.0.0.1', () => {
-            console.log(`[Main] Tab receiver listening on http://127.0.0.1:${TAB_SERVER_PORT} (retry)`);
-          });
-        }, 1000);
-      });
-    }
-  } else {
-    console.error('[Main] Tab server error:', err.message);
   }
 });
 

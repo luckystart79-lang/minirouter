@@ -76,21 +76,38 @@ export default function BrowserMonitor() {
     const extData = await ipcRenderer.invoke('get-extension-tabs');
     setExtensionData(extData);
 
-    // Merge all tab data into history (prefer CDP + Extension over window titles)
+    // Merge all tab data into history
     const allSources = { ...cdp, ...extData };
-    for (const [browser, bData] of Object.entries(allSources)) {
-      if (bData.tabs) {
-        const newEntries = bData.tabs
-          .filter(tab => tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://') && !tab.url.startsWith('about:'))
-          .filter(tab => !history.some(h => h.url === tab.url))
-          .map(tab => {
-            const info = classifyUrl(tab.url, tab.title);
-            return { ...tab, browser, ...info, timestamp: new Date().toLocaleTimeString() };
-          });
-        if (newEntries.length > 0) {
-          setHistory(prev => [...newEntries, ...prev].slice(0, 200));
+    const hasDeep = Object.keys(allSources).length > 0;
+
+    if (hasDeep) {
+      // Deep scan: use CDP + Extension data (has URLs)
+      for (const [browser, bData] of Object.entries(allSources)) {
+        if (bData.tabs) {
+          const newEntries = bData.tabs
+            .filter(tab => tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://') && !tab.url.startsWith('about:'))
+            .filter(tab => !history.some(h => h.url === tab.url))
+            .map(tab => {
+              const info = classifyUrl(tab.url, tab.title);
+              return { ...tab, browser, ...info, timestamp: new Date().toLocaleTimeString() };
+            });
+          if (newEntries.length > 0) {
+            setHistory(prev => [...newEntries, ...prev].slice(0, 200));
+          }
         }
       }
+    } else if (winData.browsers && winData.browsers.length > 0) {
+      // Fallback: use window title data (no URL, but still useful)
+      setHistory(prev => {
+        const newEntries = winData.browsers
+          .filter(tab => !prev.some(h => h.fullTitle === tab.fullTitle))
+          .map(tab => ({
+            ...tab,
+            title: tab.pageTitle,
+            timestamp: new Date().toLocaleTimeString()
+          }));
+        return [...newEntries, ...prev].slice(0, 200);
+      });
     }
   }
 
