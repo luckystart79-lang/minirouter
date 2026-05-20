@@ -121,25 +121,33 @@ function fetchPageMeta(url) {
  * Classify content safety based on text analysis
  * Returns: { safety: 'safe'|'caution'|'danger', flags: string[], details: string }
  */
-function classifyContent(text) {
-  const lower = text.toLowerCase();
+function classifyContent(url, text) {
+  const lower = (url + ' ' + text).toLowerCase();
   const flags = [];
   let safety = 'safe';
 
+  // Explicit check for Shorts and TikTok (wastetime: shorts)
+  if (url.includes('youtube.com/shorts') || url.includes('youtu.be/shorts') || url.includes('tiktok.com')) {
+    safety = 'caution';
+    flags.push('⚠️ wastetime: shorts');
+  }
+
   // Check DANGER keywords
-  for (const [category, keywords] of Object.entries(DANGER_KEYWORDS)) {
-    const matched = keywords.filter(kw => lower.includes(kw));
-    if (matched.length > 0) {
-      safety = 'danger';
-      flags.push(`🚫 ${category.toUpperCase()}: ${matched.join(', ')}`);
+  if (safety !== 'danger') {
+    for (const [category, keywords] of Object.entries(DANGER_KEYWORDS)) {
+      const matched = keywords.filter(kw => lower.includes(kw));
+      if (matched.length > 0) {
+        safety = 'danger';
+        flags.push(`🚫 ${category.toUpperCase()}: ${matched.join(', ')}`);
+      }
     }
   }
 
-  // Check CAUTION keywords
+  // Check CAUTION keywords (only if not already flagged as danger)
   if (safety !== 'danger') {
     for (const [category, keywords] of Object.entries(CAUTION_KEYWORDS)) {
       const matched = keywords.filter(kw => lower.includes(kw));
-      if (matched.length > 0) {
+      if (matched.length > 0 && !flags.some(f => f.includes(category))) {
         safety = 'caution';
         flags.push(`⚠️ ${category}: ${matched.join(', ')}`);
       }
@@ -179,8 +187,8 @@ async function analyzeEntry(entry) {
   }
 
   // Combine all text for classification
-  const allText = `${enrichedTitle} ${description} ${channel} ${url}`;
-  const { safety, flags } = classifyContent(allText);
+  const allText = `${enrichedTitle} ${description} ${channel}`;
+  const { safety, flags } = classifyContent(url, allText);
 
   return {
     ...entry,
@@ -202,8 +210,7 @@ async function analyzeHistory(entries, maxAnalyze = 20) {
 
   for (const entry of entries) {
     // Quick classification based on title + URL (always, no network)
-    const allText = `${entry.title} ${entry.url}`;
-    const { safety, flags } = classifyContent(allText);
+    const { safety, flags } = classifyContent(entry.url, entry.title);
     
     results.push({
       ...entry,
@@ -223,8 +230,8 @@ async function analyzeHistory(entries, maxAnalyze = 20) {
         entry.enrichedTitle = ytInfo.title || entry.title;
         entry.channel = ytInfo.channel;
         // Re-classify with enriched data
-        const reText = `${entry.enrichedTitle} ${entry.channel} ${entry.url}`;
-        const reclassified = classifyContent(reText);
+        const reText = `${entry.enrichedTitle} ${entry.channel}`;
+        const reclassified = classifyContent(entry.url, reText);
         entry.safety = reclassified.safety;
         entry.flags = reclassified.flags;
       }
