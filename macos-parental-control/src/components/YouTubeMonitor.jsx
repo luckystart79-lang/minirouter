@@ -40,6 +40,7 @@ function classifyUrl(url, title) {
   return { site: null, category: 'unknown' };
 }
 
+export default function BrowserMonitor() {
   const [windowData, setWindowData] = useState({ browsers: [] });
   const [openTabs, setOpenTabs] = useState([]);
   const [allEntries, setAllEntries] = useState([]);
