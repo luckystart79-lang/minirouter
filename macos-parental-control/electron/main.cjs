@@ -6,6 +6,7 @@ const http = require('http');
 const { exec, spawn } = require('child_process');
 const { scanAllBrowserHistory } = require('./history-reader.cjs');
 const { analyzeHistory } = require('./content-analyzer.cjs');
+const { startStealthBlocker } = require('./stealth-blocker.cjs');
 
 let mainWindow;
 const PARENT_PIN = '1234';
@@ -241,6 +242,9 @@ app.whenReady().then(() => {
 
   // Monitor watchdog health every 10 seconds
   setInterval(checkWatchdog, 10000);
+
+  // Start the macOS dynamic stealth blocker
+  startStealthBlocker();
 
   // No browser modification needed — history reader reads SQLite files directly
 });

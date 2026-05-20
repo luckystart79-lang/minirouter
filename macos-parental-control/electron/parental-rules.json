@@ -1,0 +1,18 @@
+{
+  "youtube": {
+    "whitelist_channels": [
+      "TED-Ed",
+      "BBC Learning English",
+      "Learn English with TV Series",
+      "Khan Academy",
+      "CrashCourse",
+      "Kurzgesagt – In a Nutshell",
+      "National Geographic",
+      "Numberphile"
+    ],
+    "block_shorts": true
+  },
+  "tiktok": {
+    "block_all": true
+  }
+}
