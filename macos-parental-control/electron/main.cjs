@@ -187,8 +187,9 @@ ipcMain.handle('check-youtube-activity', async () => {
 
     let command;
     if (isWin) {
-      // PowerShell: get all browser window titles
-      command = `powershell -Command "Get-Process chrome,msedge,firefox -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowTitle -ne ''} | Select-Object -ExpandProperty MainWindowTitle"`;
+      // Use external .ps1 script to avoid $_ escaping issues in exec()
+      const scriptPath = path.join(__dirname, 'get-window-titles.ps1');
+      command = `powershell -ExecutionPolicy Bypass -File "${scriptPath}"`;
     } else {
       // macOS: use osascript to get Safari/Chrome window titles
       command = `osascript -e 'tell application "System Events" to get name of every window of (every process whose name is "Google Chrome" or name is "Safari" or name is "Firefox")'`;
