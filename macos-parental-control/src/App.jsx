@@ -90,7 +90,7 @@ export default function App() {
         <div 
           onClick={() => setActiveTab('youtube')}
           style={{ padding: '10px', cursor: 'pointer', borderRadius: 5, background: activeTab === 'youtube' ? '#34495e' : 'transparent', marginBottom: 4 }}
-        >📺 YouTube</div>
+        >🌐 Browser</div>
         <div 
           onClick={() => setActiveTab('settings')}
           style={{ padding: '10px', cursor: 'pointer', borderRadius: 5, background: activeTab === 'settings' ? '#34495e' : 'transparent', marginBottom: 4 }}

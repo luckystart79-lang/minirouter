@@ -210,77 +210,165 @@ ipcMain.handle('kill-apps', async (event, targetApps) => {
   return true;
 });
 
-// --- YouTube Content Monitoring (Window Title Detection) --- //
-const EDUCATIONAL_KEYWORDS = [
-  'learn', 'tutorial', 'education', 'lesson', 'course', 'study',
-  'english', 'math', 'science', 'history', 'geography', 'coding',
-  'programming', 'lecture', 'how to', 'explain', 'documentary',
-  'ted', 'khan academy', 'crash course', 'homework', 'exam',
-  'ielts', 'toefl', 'toeic', 'grammar', 'vocabulary',
-  'học', 'bài giảng', 'tiếng anh', 'toán', 'lý', 'hóa', 'sinh',
-  'lịch sử', 'địa lý', 'lập trình', 'hướng dẫn'
+// --- Browser Activity Monitoring (ALL browsers, ALL content) --- //
+
+// Known browser suffixes in window titles
+const BROWSER_SUFFIXES = [
+  'google chrome', 'mozilla firefox', 'microsoft\u00ae edge', 'microsoft edge',
+  'opera', 'brave', 'vivaldi', 'safari', 'arc', 'chromium', 'waterfox',
+  'comet', 'zen browser', 'tor browser'
 ];
 
-const ENTERTAINMENT_KEYWORDS = [
-  'gameplay', 'gaming', 'lets play', "let's play", 'walkthrough',
-  'fortnite', 'minecraft', 'roblox', 'gta', 'pubg', 'valorant',
-  'free fire', 'among us', 'tiktok', 'shorts', 'meme', 'funny',
-  'prank', 'challenge', 'reaction', 'unboxing', 'asmr',
-  'music video', 'mv', 'lyrics', 'karaoke',
-  'game', 'chơi game', 'hài', 'thử thách'
+// Website classification rules
+const SITE_RULES = [
+  // Entertainment / Social
+  { pattern: 'youtube', site: 'YouTube', category: 'entertainment' },
+  { pattern: 'tiktok', site: 'TikTok', category: 'entertainment' },
+  { pattern: 'facebook', site: 'Facebook', category: 'social' },
+  { pattern: 'instagram', site: 'Instagram', category: 'social' },
+  { pattern: 'twitter', site: 'Twitter/X', category: 'social' },
+  { pattern: 'reddit', site: 'Reddit', category: 'social' },
+  { pattern: 'twitch', site: 'Twitch', category: 'entertainment' },
+  { pattern: 'netflix', site: 'Netflix', category: 'entertainment' },
+  { pattern: 'discord', site: 'Discord', category: 'social' },
+  { pattern: 'telegram', site: 'Telegram', category: 'social' },
+  { pattern: 'zalo', site: 'Zalo', category: 'social' },
+  { pattern: 'messenger', site: 'Messenger', category: 'social' },
+  { pattern: 'spotify', site: 'Spotify', category: 'entertainment' },
+  // Gaming
+  { pattern: 'roblox', site: 'Roblox', category: 'gaming' },
+  { pattern: 'minecraft', site: 'Minecraft', category: 'gaming' },
+  { pattern: 'steam', site: 'Steam', category: 'gaming' },
+  { pattern: 'epic games', site: 'Epic Games', category: 'gaming' },
+  { pattern: 'itch.io', site: 'Itch.io', category: 'gaming' },
+  { pattern: 'coolmath', site: 'CoolMath Games', category: 'gaming' },
+  { pattern: 'friv', site: 'Friv', category: 'gaming' },
+  { pattern: 'y8.com', site: 'Y8 Games', category: 'gaming' },
+  { pattern: 'poki.com', site: 'Poki Games', category: 'gaming' },
+  // Educational
+  { pattern: 'khan academy', site: 'Khan Academy', category: 'educational' },
+  { pattern: 'duolingo', site: 'Duolingo', category: 'educational' },
+  { pattern: 'wikipedia', site: 'Wikipedia', category: 'educational' },
+  { pattern: 'google classroom', site: 'Google Classroom', category: 'educational' },
+  { pattern: 'coursera', site: 'Coursera', category: 'educational' },
+  { pattern: 'edx', site: 'edX', category: 'educational' },
+  { pattern: 'google docs', site: 'Google Docs', category: 'productive' },
+  { pattern: 'google sheets', site: 'Google Sheets', category: 'productive' },
+  { pattern: 'google slides', site: 'Google Slides', category: 'productive' },
 ];
+
+const CONTENT_KEYWORDS = {
+  educational: [
+    'learn', 'tutorial', 'education', 'lesson', 'course', 'study',
+    'english', 'math', 'science', 'history', 'coding', 'programming',
+    'lecture', 'how to', 'documentary', 'khan academy', 'crash course',
+    'homework', 'exam', 'ielts', 'toefl', 'grammar', 'vocabulary',
+    'học', 'bài giảng', 'tiếng anh', 'toán', 'lập trình', 'hướng dẫn'
+  ],
+  entertainment: [
+    'gameplay', 'gaming', 'lets play', 'walkthrough', 'fortnite',
+    'minecraft', 'roblox', 'gta', 'pubg', 'valorant', 'free fire',
+    'tiktok', 'shorts', 'meme', 'funny', 'prank', 'challenge',
+    'reaction', 'unboxing', 'asmr', 'music video', 'lyrics',
+    'game', 'chơi game', 'hài', 'thử thách', 'phim'
+  ]
+};
+
+function detectBrowser(title) {
+  const lower = title.toLowerCase();
+  for (const suffix of BROWSER_SUFFIXES) {
+    if (lower.includes(suffix)) {
+      // Extract browser name nicely
+      return suffix.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    }
+  }
+  return null;
+}
+
+function detectSite(title) {
+  const lower = title.toLowerCase();
+  for (const rule of SITE_RULES) {
+    if (lower.includes(rule.pattern)) {
+      return { site: rule.site, category: rule.category };
+    }
+  }
+  return null;
+}
 
 function classifyContent(title) {
   const lower = title.toLowerCase();
-  const isEdu = EDUCATIONAL_KEYWORDS.some(kw => lower.includes(kw));
-  const isEnt = ENTERTAINMENT_KEYWORDS.some(kw => lower.includes(kw));
-
+  const isEdu = CONTENT_KEYWORDS.educational.some(kw => lower.includes(kw));
+  const isEnt = CONTENT_KEYWORDS.entertainment.some(kw => lower.includes(kw));
   if (isEdu && !isEnt) return 'educational';
   if (isEnt && !isEdu) return 'entertainment';
   if (isEdu && isEnt) return 'mixed';
   return 'unknown';
 }
 
-ipcMain.handle('check-youtube-activity', async () => {
+function extractPageTitle(fullTitle, browser) {
+  // Remove browser suffix: "Page Title - Google Chrome" -> "Page Title"
+  const lower = fullTitle.toLowerCase();
+  for (const suffix of BROWSER_SUFFIXES) {
+    const idx = lower.lastIndexOf(suffix);
+    if (idx > 0) {
+      return fullTitle.substring(0, idx).replace(/\s*[-–—]\s*$/, '').trim();
+    }
+  }
+  return fullTitle;
+}
+
+ipcMain.handle('check-browser-activity', async () => {
   return new Promise((resolve) => {
     const isWin = process.platform === 'win32';
 
     let command;
     if (isWin) {
-      // Use external .ps1 script to avoid $_ escaping issues in exec()
       const scriptPath = path.join(__dirname, 'get-window-titles.ps1');
       command = `powershell -ExecutionPolicy Bypass -File "${scriptPath}"`;
     } else {
-      // macOS: use osascript to get Safari/Chrome window titles
-      command = `osascript -e 'tell application "System Events" to get name of every window of (every process whose name is "Google Chrome" or name is "Safari" or name is "Firefox")'`;
+      command = `osascript -e 'tell application "System Events" to get name of every window of every process'`;
     }
 
-    exec(command, { timeout: 5000 }, (error, stdout) => {
+    exec(command, { timeout: 10000 }, (error, stdout) => {
       if (error || !stdout.trim()) {
-        resolve({ isWatchingYouTube: false, tabs: [] });
+        resolve({ browsers: [], hasYouTubeStream: false });
         return;
       }
 
       const lines = stdout.trim().split('\n').filter(Boolean);
-      const youtubeTabs = [];
+      const browserTabs = [];
+      let hasYouTubeStream = false;
 
-      lines.forEach(title => {
-        const trimmed = title.trim();
-        if (trimmed.toLowerCase().includes('youtube')) {
-          // Extract video title (format: "Video Title - YouTube")
-          const videoTitle = trimmed.replace(/\s*[-–—]\s*YouTube.*$/i, '').trim();
-          const category = classifyContent(trimmed);
-          youtubeTabs.push({
-            fullTitle: trimmed,
-            videoTitle: videoTitle || trimmed,
-            category
-          });
+      lines.forEach(line => {
+        const trimmed = line.trim();
+
+        if (trimmed.startsWith('TITLE:')) {
+          const fullTitle = trimmed.substring(6);
+          const browser = detectBrowser(fullTitle);
+
+          if (browser) {
+            const pageTitle = extractPageTitle(fullTitle, browser);
+            const siteInfo = detectSite(fullTitle);
+            const contentCategory = siteInfo ? siteInfo.category : classifyContent(fullTitle);
+
+            browserTabs.push({
+              browser,
+              pageTitle,
+              fullTitle,
+              site: siteInfo ? siteInfo.site : null,
+              category: contentCategory
+            });
+          }
+        }
+
+        if (trimmed.startsWith('NET:')) {
+          hasYouTubeStream = true;
         }
       });
 
       resolve({
-        isWatchingYouTube: youtubeTabs.length > 0,
-        tabs: youtubeTabs
+        browsers: browserTabs,
+        hasYouTubeStream
       });
     });
   });
