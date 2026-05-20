@@ -1,10 +1,56 @@
 const { app, BrowserWindow, ipcMain, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { exec } = require('child_process');
+const os = require('os');
+const { exec, spawn } = require('child_process');
 
 let mainWindow;
 const PARENT_PIN = '1234';
+
+// --- Watchdog PID Management ---
+const PID_DIR = path.join(os.homedir(), '.parental-control');
+const MAIN_PID_FILE = path.join(PID_DIR, 'main.pid');
+const WATCHDOG_PID_FILE = path.join(PID_DIR, 'watchdog.pid');
+
+if (!fs.existsSync(PID_DIR)) {
+  fs.mkdirSync(PID_DIR, { recursive: true });
+}
+
+// Write our PID so watchdog can find us
+fs.writeFileSync(MAIN_PID_FILE, process.pid.toString());
+
+function isPidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch(e) { return false; }
+}
+
+function spawnWatchdog() {
+  const watchdogScript = path.join(__dirname, 'watchdog.cjs');
+  const nodePath = process.execPath; // Use the same node/electron binary
+  
+  // Use system node if available, otherwise fall back
+  const isWin = process.platform === 'win32';
+  const nodeCmd = isWin ? 'node' : 'node';
+  
+  const child = spawn(nodeCmd, [watchdogScript], {
+    detached: true,
+    stdio: 'ignore',
+    cwd: path.join(__dirname, '..')
+  });
+  child.unref();
+  console.log(`[Main] Spawned watchdog (PID: ${child.pid})`);
+}
+
+function checkWatchdog() {
+  try {
+    if (fs.existsSync(WATCHDOG_PID_FILE)) {
+      const pid = parseInt(fs.readFileSync(WATCHDOG_PID_FILE, 'utf8').trim(), 10);
+      if (!isNaN(pid) && isPidAlive(pid)) return; // Watchdog is alive
+    }
+  } catch(e) { /* ignore */ }
+  // Watchdog is dead or missing, respawn it
+  console.log('[Main] Watchdog is dead. Respawning...');
+  spawnWatchdog();
+}
 
 // --- Persistence Config ---
 const configPath = path.join(app.getPath('userData'), 'parental-config.json');
@@ -99,6 +145,12 @@ app.whenReady().then(() => {
     openAtLogin: true,
     path: app.getPath('exe')
   });
+
+  // Spawn watchdog on startup
+  spawnWatchdog();
+
+  // Monitor watchdog health every 10 seconds
+  setInterval(checkWatchdog, 10000);
 });
 
 // Prevent app from quitting when all windows are closed
@@ -108,6 +160,14 @@ app.on('window-all-closed', (e) => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  // Clean up PID file only on legitimate quit (PIN verified)
+  try { fs.unlinkSync(MAIN_PID_FILE); } catch(e) {}
+  // Also kill watchdog on legitimate quit
+  try {
+    const wdPid = parseInt(fs.readFileSync(WATCHDOG_PID_FILE, 'utf8').trim(), 10);
+    if (!isNaN(wdPid)) process.kill(wdPid, 'SIGTERM');
+    fs.unlinkSync(WATCHDOG_PID_FILE);
+  } catch(e) {}
 });
 
 // --- Cross-Platform Activity Monitoring --- //
