@@ -5,6 +5,7 @@ const os = require('os');
 const http = require('http');
 const { exec, spawn } = require('child_process');
 const { scanAllBrowserHistory } = require('./history-reader.cjs');
+const { analyzeHistory } = require('./content-analyzer.cjs');
 
 let mainWindow;
 const PARENT_PIN = '1234';
@@ -81,6 +82,11 @@ ipcMain.handle('get-extension-tabs', () => {
 // IPC: read browser history directly from SQLite files (no extension, no restart!)
 ipcMain.handle('scan-browser-history', async () => {
   return await scanAllBrowserHistory(30); // last 30 minutes
+});
+
+// IPC: analyze content safety of history entries
+ipcMain.handle('analyze-content', async (_, entries) => {
+  return await analyzeHistory(entries, 20); // max 20 YouTube lookups per scan
 });
 
 // --- Watchdog PID Management ---
