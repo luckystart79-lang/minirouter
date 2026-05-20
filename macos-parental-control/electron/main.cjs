@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const http = require('http');
 const { exec, spawn } = require('child_process');
+const { scanAllBrowserTabs, enableAllDebugPorts } = require('./cdp-scanner.cjs');
 
 let mainWindow;
 const PARENT_PIN = '1234';
@@ -62,6 +63,11 @@ ipcMain.handle('get-extension-tabs', () => {
     }
   }
   return result;
+});
+
+// IPC: scan ALL browser tabs via Chrome DevTools Protocol (no extension needed)
+ipcMain.handle('scan-cdp-tabs', async () => {
+  return await scanAllBrowserTabs();
 });
 
 // --- Watchdog PID Management ---
@@ -208,6 +214,9 @@ app.whenReady().then(() => {
 
   // Monitor watchdog health every 10 seconds
   setInterval(checkWatchdog, 10000);
+
+  // Enable Chrome DevTools debug ports on all browser shortcuts
+  enableAllDebugPorts();
 });
 
 // Prevent app from quitting when all windows are closed

@@ -54,6 +54,7 @@ function classifyUrl(url, title) {
 export default function BrowserMonitor() {
   const [windowData, setWindowData] = useState({ browsers: [], hasYouTubeStream: false });
   const [extensionData, setExtensionData] = useState({});
+  const [cdpData, setCdpData] = useState({});
   const [history, setHistory] = useState([]);
 
   useEffect(() => {
@@ -63,19 +64,24 @@ export default function BrowserMonitor() {
   }, []);
 
   async function fetchData() {
-    // Source 1: Window titles (Phase 1 - active tab only)
+    // Source 1: Window titles (always works, active tab only)
     const winData = await ipcRenderer.invoke('check-browser-activity');
     setWindowData(winData);
 
-    // Source 2: Extension tab data (Phase 2 - ALL tabs)
+    // Source 2: CDP — Chrome DevTools Protocol (ALL tabs, no extension!)
+    const cdp = await ipcRenderer.invoke('scan-cdp-tabs');
+    setCdpData(cdp);
+
+    // Source 3: Extension tab data (if installed)
     const extData = await ipcRenderer.invoke('get-extension-tabs');
     setExtensionData(extData);
 
-    // Log ALL extension tabs into history
-    for (const [browser, bData] of Object.entries(extData)) {
+    // Merge all tab data into history (prefer CDP + Extension over window titles)
+    const allSources = { ...cdp, ...extData };
+    for (const [browser, bData] of Object.entries(allSources)) {
       if (bData.tabs) {
         const newEntries = bData.tabs
-          .filter(tab => tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://'))
+          .filter(tab => tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://') && !tab.url.startsWith('about:'))
           .filter(tab => !history.some(h => h.url === tab.url))
           .map(tab => {
             const info = classifyUrl(tab.url, tab.title);
@@ -88,28 +94,34 @@ export default function BrowserMonitor() {
     }
   }
 
-  // Check if extension is installed
+  // Check data sources
   const hasExtension = Object.keys(extensionData).length > 0;
+  const hasCdp = Object.keys(cdpData).length > 0;
+  const hasDeepScan = hasExtension || hasCdp;
 
-  // Merge all extension tabs for display
-  const allExtTabs = [];
-  for (const [browser, bData] of Object.entries(extensionData)) {
+  // Merge ALL tabs from CDP + Extension (deduplicate by URL)
+  const allTabs = [];
+  const seenUrls = new Set();
+  const allSources = { ...cdpData, ...extensionData }; // Extension overwrites CDP (has audible info)
+
+  for (const [browser, bData] of Object.entries(allSources)) {
     if (bData.tabs) {
       bData.tabs.forEach(tab => {
-        if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://') && !tab.url.startsWith('about:')) {
+        if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://') && !tab.url.startsWith('about:') && !seenUrls.has(tab.url)) {
+          seenUrls.add(tab.url);
           const info = classifyUrl(tab.url, tab.title);
-          allExtTabs.push({ ...tab, browser, ...info });
+          allTabs.push({ ...tab, browser, ...info });
         }
       });
     }
   }
 
   // Find audible (playing audio) tabs — THE KEY FEATURE!
-  const audibleTabs = allExtTabs.filter(t => t.audible);
+  const audibleTabs = allTabs.filter(t => t.audible);
 
   // Stats
   const categoryCounts = {};
-  allExtTabs.forEach(t => {
+  allTabs.forEach(t => {
     categoryCounts[t.category] = (categoryCounts[t.category] || 0) + 1;
   });
 
@@ -117,7 +129,9 @@ export default function BrowserMonitor() {
     <div style={{ maxWidth: 750, margin: '0 auto' }}>
       <h1 style={{ marginBottom: 5 }}>🌐 Browser Activity Monitor</h1>
       <p style={{ color: '#7f8c8d', marginTop: 0 }}>
-        {hasExtension ? '✅ Extension active — scanning ALL tabs' : '⬜ Window titles only — install extension for full tab scanning'}
+        {hasDeepScan
+          ? `✅ Deep scan active (${hasCdp ? 'CDP' : ''}${hasCdp && hasExtension ? ' + ' : ''}${hasExtension ? 'Extension' : ''}) — ALL tabs visible`
+          : '🪟 Window titles only — restart browser to enable deep scan'}
       </p>
 
       {/* AUDIBLE ALERT — tabs playing audio */}
@@ -137,25 +151,23 @@ export default function BrowserMonitor() {
         </div>
       )}
 
-      {/* Extension status / install guide */}
-      {!hasExtension && (
-        <div style={{ background: '#ebf5fb', border: '1px solid #aed6f1', padding: 15, borderRadius: 8, marginBottom: 15, fontSize: '0.85rem' }}>
-          <strong>📦 Install Extension for Full Tab Scanning:</strong>
-          <ol style={{ margin: '8px 0 0 0', paddingLeft: 20 }}>
-            <li>Open Chrome/Edge → go to <code>chrome://extensions</code></li>
-            <li>Enable "Developer mode" (top right toggle)</li>
-            <li>Click "Load unpacked" → select the <code>browser-extension</code> folder</li>
-            <li>Done! All tabs will be reported automatically.</li>
-          </ol>
+      {/* Info: how deep scan works */}
+      {!hasDeepScan && (
+        <div style={{ background: '#ebf5fb', border: '1px solid #aed6f1', padding: 12, borderRadius: 8, marginBottom: 15, fontSize: '0.82rem' }}>
+          <strong>💡 Deep Tab Scan (auto, no extension needed):</strong>
+          <p style={{ margin: '6px 0 0 0', lineHeight: 1.5 }}>
+            App tự động thêm debug flag vào shortcut trình duyệt. Chỉ cần <strong>tắt rồi mở lại trình duyệt</strong> là tất cả tabs sẽ hiện.
+            Nếu cần audible detection (phát hiện audio), cài thêm extension trong <code>browser-extension/</code>.
+          </p>
         </div>
       )}
 
-      {/* ALL TABS from extension (Phase 2) */}
-      {hasExtension && allExtTabs.length > 0 && (
+      {/* ALL TABS from CDP + Extension */}
+      {hasDeepScan && allTabs.length > 0 && (
         <div style={{ background: 'white', padding: 15, borderRadius: 10, marginBottom: 15, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
-          <h3 style={{ marginTop: 0 }}>📑 All Open Tabs ({allExtTabs.length})</h3>
+          <h3 style={{ marginTop: 0 }}>📑 All Open Tabs ({allTabs.length})</h3>
           <div style={{ maxHeight: 350, overflow: 'auto' }}>
-            {allExtTabs.map((tab, idx) => {
+            {allTabs.map((tab, idx) => {
               const catStyle = CATEGORY_STYLES[tab.category] || CATEGORY_STYLES.unknown;
               return (
                 <div key={idx} style={{
@@ -188,12 +200,12 @@ export default function BrowserMonitor() {
         </div>
       )}
 
-      {/* Fallback: Window titles (Phase 1 — when no extension) */}
-      {!hasExtension && windowData.browsers.length > 0 && (
+      {/* Fallback: Window titles (when no deep scan available) */}
+      {!hasDeepScan && windowData.browsers.length > 0 && (
         <div style={{ background: 'white', padding: 15, borderRadius: 10, marginBottom: 15, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
           <h3 style={{ marginTop: 0 }}>🪟 Active Tabs (Window Titles)</h3>
           <div style={{ background: '#fef9e7', padding: '6px 10px', borderRadius: 5, marginBottom: 10, fontSize: '0.75rem', color: '#7d6608' }}>
-            ⚠️ Only active tabs visible. Install extension to see ALL tabs.
+            ⚠️ Only active tabs visible. Restart browser to enable deep scan.
           </div>
           {windowData.browsers.map((tab, idx) => {
             const catStyle = CATEGORY_STYLES[tab.category] || CATEGORY_STYLES.unknown;
