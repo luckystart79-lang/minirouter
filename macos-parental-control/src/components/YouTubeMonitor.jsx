@@ -40,8 +40,8 @@ function classifyUrl(url, title) {
   return { site: null, category: 'unknown' };
 }
 
-export default function BrowserMonitor() {
   const [windowData, setWindowData] = useState({ browsers: [] });
+  const [openTabs, setOpenTabs] = useState([]);
   const [allEntries, setAllEntries] = useState([]);
   const [filter, setFilter] = useState('all'); // 'all' | 'danger' | 'caution' | 'safe'
 
@@ -52,12 +52,31 @@ export default function BrowserMonitor() {
   }, []);
 
   async function fetchData() {
+    // 1. Window titles (Real-time active window)
     const winData = await ipcRenderer.invoke('check-browser-activity');
     setWindowData(winData);
 
+    // 2. Open tabs from extension (if installed)
+    try {
+      const extData = await ipcRenderer.invoke('get-extension-tabs');
+      const tabs = [];
+      const seen = new Set();
+      for (const [browser, bData] of Object.entries(extData)) {
+        if (bData.tabs) {
+          bData.tabs.forEach(t => {
+            if (t.url && !seen.has(t.url)) {
+              seen.add(t.url);
+              tabs.push({ ...t, browser });
+            }
+          });
+        }
+      }
+      setOpenTabs(tabs);
+    } catch(e) {}
+
+    // 3. Complete SQLite History (Last 30 mins)
     const { analyzed } = await ipcRenderer.invoke('scan-browser-history');
     if (analyzed && analyzed.length > 0) {
-      // Add URL classification
       const enriched = analyzed.map(e => ({
         ...e,
         ...classifyUrl(e.url, e.enrichedTitle || e.title),
@@ -140,6 +159,37 @@ export default function BrowserMonitor() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Open Tabs (CDP + Extension) */}
+      {openTabs.length > 0 && (
+        <div style={{ background: 'white', padding: 12, borderRadius: 10, marginBottom: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+          <h3 style={{ marginTop: 0, fontSize: '0.95rem' }}>📑 All Open Tabs ({openTabs.length})</h3>
+          <div style={{ maxHeight: 200, overflow: 'auto' }}>
+            {openTabs.map((tab, idx) => {
+              const catStyle = CATEGORY_STYLES[classifyUrl(tab.url, tab.title).category] || CATEGORY_STYLES.unknown;
+              return (
+                <div key={idx} style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '4px 6px', background: tab.active ? '#eaf2f8' : '#f8f9fa',
+                  borderRadius: 4, marginBottom: 3,
+                  borderLeft: `3px solid ${catStyle.color}`
+                }}>
+                  <span style={{ fontSize: '0.8rem' }}>{tab.active ? '👁' : '💤'}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {tab.title || 'Untitled'}
+                    </div>
+                    <div style={{ fontSize: '0.65rem', color: '#bdc3c7', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {tab.url}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '0.6rem', color: '#95a5a6', whiteSpace: 'nowrap' }}>{tab.browser}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
