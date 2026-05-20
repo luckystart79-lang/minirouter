@@ -48,6 +48,25 @@ const tabServer = http.createServer((req, res) => {
   }
 });
 
+tabServer.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.log(`[Main] Port ${TAB_SERVER_PORT} in use, killing old process...`);
+    // Kill the process holding the port, then retry
+    const isWin = process.platform === 'win32';
+    if (isWin) {
+      exec(`for /f "tokens=5" %a in ('netstat -aon ^| findstr :${TAB_SERVER_PORT}') do taskkill /F /PID %a`, () => {
+        setTimeout(() => {
+          tabServer.listen(TAB_SERVER_PORT, '127.0.0.1', () => {
+            console.log(`[Main] Tab receiver listening on http://127.0.0.1:${TAB_SERVER_PORT} (retry)`);
+          });
+        }, 1000);
+      });
+    }
+  } else {
+    console.error('[Main] Tab server error:', err.message);
+  }
+});
+
 tabServer.listen(TAB_SERVER_PORT, '127.0.0.1', () => {
   console.log(`[Main] Tab receiver listening on http://127.0.0.1:${TAB_SERVER_PORT}`);
 });
