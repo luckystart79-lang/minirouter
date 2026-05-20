@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Dashboard from './components/Dashboard';
 import Learning from './components/Learning';
 import Settings from './components/Settings';
+import YouTubeMonitor from './components/YouTubeMonitor';
 const { ipcRenderer } = window.require('electron');
 
 const BASE_QUOTA = 120 * 60; // 2 hours
@@ -87,6 +88,10 @@ export default function App() {
           style={{ padding: '10px', cursor: 'pointer', borderRadius: 5, background: activeTab === 'learning' ? '#34495e' : 'transparent', marginBottom: 4 }}
         >📚 Learning</div>
         <div 
+          onClick={() => setActiveTab('youtube')}
+          style={{ padding: '10px', cursor: 'pointer', borderRadius: 5, background: activeTab === 'youtube' ? '#34495e' : 'transparent', marginBottom: 4 }}
+        >📺 YouTube</div>
+        <div 
           onClick={() => setActiveTab('settings')}
           style={{ padding: '10px', cursor: 'pointer', borderRadius: 5, background: activeTab === 'settings' ? '#34495e' : 'transparent', marginBottom: 4 }}
         >⚙️ Settings</div>
@@ -103,6 +108,7 @@ export default function App() {
       <div style={{ flex: 1, padding: '20px', background: '#ecf0f1', overflow: 'auto' }}>
         {activeTab === 'dashboard' && <Dashboard quota={quota} blockedApps={blockedApps} />}
         {activeTab === 'learning' && <Learning onEarnBonus={addBonusTime} />}
+        {activeTab === 'youtube' && <YouTubeMonitor />}
         {activeTab === 'settings' && <Settings blockedApps={blockedApps} setBlockedApps={setBlockedApps} />}
       </div>
 

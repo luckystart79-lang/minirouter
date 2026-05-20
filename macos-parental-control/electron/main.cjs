@@ -149,3 +149,78 @@ ipcMain.handle('kill-apps', async (event, targetApps) => {
   });
   return true;
 });
+
+// --- YouTube Content Monitoring (Window Title Detection) --- //
+const EDUCATIONAL_KEYWORDS = [
+  'learn', 'tutorial', 'education', 'lesson', 'course', 'study',
+  'english', 'math', 'science', 'history', 'geography', 'coding',
+  'programming', 'lecture', 'how to', 'explain', 'documentary',
+  'ted', 'khan academy', 'crash course', 'homework', 'exam',
+  'ielts', 'toefl', 'toeic', 'grammar', 'vocabulary',
+  'học', 'bài giảng', 'tiếng anh', 'toán', 'lý', 'hóa', 'sinh',
+  'lịch sử', 'địa lý', 'lập trình', 'hướng dẫn'
+];
+
+const ENTERTAINMENT_KEYWORDS = [
+  'gameplay', 'gaming', 'lets play', "let's play", 'walkthrough',
+  'fortnite', 'minecraft', 'roblox', 'gta', 'pubg', 'valorant',
+  'free fire', 'among us', 'tiktok', 'shorts', 'meme', 'funny',
+  'prank', 'challenge', 'reaction', 'unboxing', 'asmr',
+  'music video', 'mv', 'lyrics', 'karaoke',
+  'game', 'chơi game', 'hài', 'thử thách'
+];
+
+function classifyContent(title) {
+  const lower = title.toLowerCase();
+  const isEdu = EDUCATIONAL_KEYWORDS.some(kw => lower.includes(kw));
+  const isEnt = ENTERTAINMENT_KEYWORDS.some(kw => lower.includes(kw));
+
+  if (isEdu && !isEnt) return 'educational';
+  if (isEnt && !isEdu) return 'entertainment';
+  if (isEdu && isEnt) return 'mixed';
+  return 'unknown';
+}
+
+ipcMain.handle('check-youtube-activity', async () => {
+  return new Promise((resolve) => {
+    const isWin = process.platform === 'win32';
+
+    let command;
+    if (isWin) {
+      // PowerShell: get all browser window titles
+      command = `powershell -Command "Get-Process chrome,msedge,firefox -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowTitle -ne ''} | Select-Object -ExpandProperty MainWindowTitle"`;
+    } else {
+      // macOS: use osascript to get Safari/Chrome window titles
+      command = `osascript -e 'tell application "System Events" to get name of every window of (every process whose name is "Google Chrome" or name is "Safari" or name is "Firefox")'`;
+    }
+
+    exec(command, { timeout: 5000 }, (error, stdout) => {
+      if (error || !stdout.trim()) {
+        resolve({ isWatchingYouTube: false, tabs: [] });
+        return;
+      }
+
+      const lines = stdout.trim().split('\n').filter(Boolean);
+      const youtubeTabs = [];
+
+      lines.forEach(title => {
+        const trimmed = title.trim();
+        if (trimmed.toLowerCase().includes('youtube')) {
+          // Extract video title (format: "Video Title - YouTube")
+          const videoTitle = trimmed.replace(/\s*[-–—]\s*YouTube.*$/i, '').trim();
+          const category = classifyContent(trimmed);
+          youtubeTabs.push({
+            fullTitle: trimmed,
+            videoTitle: videoTitle || trimmed,
+            category
+          });
+        }
+      });
+
+      resolve({
+        isWatchingYouTube: youtubeTabs.length > 0,
+        tabs: youtubeTabs
+      });
+    });
+  });
+});
