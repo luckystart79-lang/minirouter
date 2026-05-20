@@ -2,10 +2,67 @@ const { app, BrowserWindow, ipcMain, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const http = require('http');
 const { exec, spawn } = require('child_process');
 
 let mainWindow;
 const PARENT_PIN = '1234';
+
+// --- Browser Extension Tab Data ---
+// Stores ALL tab data received from browser extensions
+let extensionTabData = {};  // keyed by browser name
+
+// HTTP server to receive tab reports from browser extensions
+const TAB_SERVER_PORT = 7700;
+const tabServer = http.createServer((req, res) => {
+  // CORS headers so extensions can POST
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/tabs') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const data = JSON.parse(body);
+        extensionTabData[data.browser] = {
+          tabs: data.tabs,
+          timestamp: data.timestamp,
+          receivedAt: Date.now()
+        };
+      } catch (e) { /* ignore bad JSON */ }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+
+tabServer.listen(TAB_SERVER_PORT, '127.0.0.1', () => {
+  console.log(`[Main] Tab receiver listening on http://127.0.0.1:${TAB_SERVER_PORT}`);
+});
+
+// IPC: expose extension tab data to renderer
+ipcMain.handle('get-extension-tabs', () => {
+  // Filter out stale data (older than 15 seconds)
+  const now = Date.now();
+  const result = {};
+  for (const [browser, data] of Object.entries(extensionTabData)) {
+    if (now - data.receivedAt < 15000) {
+      result[browser] = data;
+    }
+  }
+  return result;
+});
 
 // --- Watchdog PID Management ---
 const PID_DIR = path.join(os.homedir(), '.parental-control');

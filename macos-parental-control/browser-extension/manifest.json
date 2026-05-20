@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Parental Control Tab Monitor",
+  "description": "Reports all open browser tabs to the Parental Control system",
+  "version": "1.0.0",
+  "permissions": [
+    "tabs",
+    "alarms"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

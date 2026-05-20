@@ -11,160 +11,254 @@ const CATEGORY_STYLES = {
   unknown: { bg: '#eaecee', color: '#566573', icon: '🌐', label: 'Other' }
 };
 
+// Classify a URL into categories
+function classifyUrl(url, title) {
+  const lower = (url + ' ' + title).toLowerCase();
+  const rules = [
+    { patterns: ['youtube.com', 'youtu.be'], site: 'YouTube', category: 'entertainment' },
+    { patterns: ['tiktok.com'], site: 'TikTok', category: 'entertainment' },
+    { patterns: ['netflix.com'], site: 'Netflix', category: 'entertainment' },
+    { patterns: ['twitch.tv'], site: 'Twitch', category: 'entertainment' },
+    { patterns: ['spotify.com'], site: 'Spotify', category: 'entertainment' },
+    { patterns: ['facebook.com', 'fb.com'], site: 'Facebook', category: 'social' },
+    { patterns: ['instagram.com'], site: 'Instagram', category: 'social' },
+    { patterns: ['twitter.com', 'x.com'], site: 'Twitter/X', category: 'social' },
+    { patterns: ['reddit.com'], site: 'Reddit', category: 'social' },
+    { patterns: ['discord.com'], site: 'Discord', category: 'social' },
+    { patterns: ['messenger.com'], site: 'Messenger', category: 'social' },
+    { patterns: ['zalo.me'], site: 'Zalo', category: 'social' },
+    { patterns: ['roblox.com'], site: 'Roblox', category: 'gaming' },
+    { patterns: ['minecraft.net'], site: 'Minecraft', category: 'gaming' },
+    { patterns: ['store.steampowered.com', 'steamcommunity.com'], site: 'Steam', category: 'gaming' },
+    { patterns: ['epicgames.com'], site: 'Epic Games', category: 'gaming' },
+    { patterns: ['poki.com'], site: 'Poki', category: 'gaming' },
+    { patterns: ['friv.com'], site: 'Friv', category: 'gaming' },
+    { patterns: ['y8.com'], site: 'Y8', category: 'gaming' },
+    { patterns: ['coolmathgames.com'], site: 'CoolMath', category: 'gaming' },
+    { patterns: ['khanacademy.org'], site: 'Khan Academy', category: 'educational' },
+    { patterns: ['duolingo.com'], site: 'Duolingo', category: 'educational' },
+    { patterns: ['wikipedia.org'], site: 'Wikipedia', category: 'educational' },
+    { patterns: ['coursera.org'], site: 'Coursera', category: 'educational' },
+    { patterns: ['classroom.google.com'], site: 'Google Classroom', category: 'educational' },
+    { patterns: ['docs.google.com'], site: 'Google Docs', category: 'productive' },
+    { patterns: ['sheets.google.com'], site: 'Google Sheets', category: 'productive' },
+  ];
+  for (const rule of rules) {
+    if (rule.patterns.some(p => lower.includes(p))) {
+      return { site: rule.site, category: rule.category };
+    }
+  }
+  return { site: null, category: 'unknown' };
+}
+
 export default function BrowserMonitor() {
-  const [data, setData] = useState({ browsers: [], hasYouTubeStream: false });
+  const [windowData, setWindowData] = useState({ browsers: [], hasYouTubeStream: false });
+  const [extensionData, setExtensionData] = useState({});
   const [history, setHistory] = useState([]);
 
   useEffect(() => {
-    // Initial fetch
     fetchData();
     const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, []);
 
   async function fetchData() {
-    const result = await ipcRenderer.invoke('check-browser-activity');
-    setData(result);
+    // Source 1: Window titles (Phase 1 - active tab only)
+    const winData = await ipcRenderer.invoke('check-browser-activity');
+    setWindowData(winData);
 
-    // Log unique entries into history
-    if (result.browsers.length > 0) {
-      setHistory(prev => {
-        const newEntries = result.browsers
-          .filter(tab => !prev.some(h => h.fullTitle === tab.fullTitle))
-          .map(tab => ({ ...tab, timestamp: new Date().toLocaleTimeString() }));
-        return [...newEntries, ...prev].slice(0, 100);
+    // Source 2: Extension tab data (Phase 2 - ALL tabs)
+    const extData = await ipcRenderer.invoke('get-extension-tabs');
+    setExtensionData(extData);
+
+    // Log ALL extension tabs into history
+    for (const [browser, bData] of Object.entries(extData)) {
+      if (bData.tabs) {
+        const newEntries = bData.tabs
+          .filter(tab => tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://'))
+          .filter(tab => !history.some(h => h.url === tab.url))
+          .map(tab => {
+            const info = classifyUrl(tab.url, tab.title);
+            return { ...tab, browser, ...info, timestamp: new Date().toLocaleTimeString() };
+          });
+        if (newEntries.length > 0) {
+          setHistory(prev => [...newEntries, ...prev].slice(0, 200));
+        }
+      }
+    }
+  }
+
+  // Check if extension is installed
+  const hasExtension = Object.keys(extensionData).length > 0;
+
+  // Merge all extension tabs for display
+  const allExtTabs = [];
+  for (const [browser, bData] of Object.entries(extensionData)) {
+    if (bData.tabs) {
+      bData.tabs.forEach(tab => {
+        if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://') && !tab.url.startsWith('about:')) {
+          const info = classifyUrl(tab.url, tab.title);
+          allExtTabs.push({ ...tab, browser, ...info });
+        }
       });
     }
   }
 
-  // Group current tabs by browser
-  const byBrowser = {};
-  data.browsers.forEach(tab => {
-    if (!byBrowser[tab.browser]) byBrowser[tab.browser] = [];
-    byBrowser[tab.browser].push(tab);
-  });
+  // Find audible (playing audio) tabs — THE KEY FEATURE!
+  const audibleTabs = allExtTabs.filter(t => t.audible);
 
-  // Count categories
+  // Stats
   const categoryCounts = {};
-  history.forEach(h => {
-    categoryCounts[h.category] = (categoryCounts[h.category] || 0) + 1;
+  allExtTabs.forEach(t => {
+    categoryCounts[t.category] = (categoryCounts[t.category] || 0) + 1;
   });
-
-  const dangerCount = history.filter(h => ['entertainment', 'gaming', 'social'].includes(h.category)).length;
 
   return (
     <div style={{ maxWidth: 750, margin: '0 auto' }}>
       <h1 style={{ marginBottom: 5 }}>🌐 Browser Activity Monitor</h1>
-      <p style={{ color: '#7f8c8d', marginTop: 0 }}>Real-time scan of ALL browsers, tabs, and web content</p>
+      <p style={{ color: '#7f8c8d', marginTop: 0 }}>
+        {hasExtension ? '✅ Extension active — scanning ALL tabs' : '⬜ Window titles only — install extension for full tab scanning'}
+      </p>
 
-      {/* Live Status */}
-      <div style={{
-        background: data.browsers.length > 0
-          ? 'linear-gradient(135deg, #3498db, #2c3e50)'
-          : 'linear-gradient(135deg, #95a5a6, #7f8c8d)',
-        padding: 20, borderRadius: 10, color: 'white', marginBottom: 20,
-        boxShadow: '0 4px 15px rgba(0,0,0,0.15)'
-      }}>
-        <div style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>
-          {data.browsers.length > 0
-            ? `🔍 ${Object.keys(byBrowser).length} browser(s) active — ${data.browsers.length} tab(s) detected`
-            : '😴 No browser activity detected'}
-        </div>
-        {data.hasYouTubeStream && (
-          <div style={{ marginTop: 8, fontSize: '0.85rem', background: 'rgba(231,76,60,0.3)', padding: '5px 10px', borderRadius: 5, display: 'inline-block' }}>
-            🔊 YouTube network stream detected (may be playing in background)
-          </div>
-        )}
-      </div>
-
-      {/* Limitation note */}
-      <div style={{ background: '#fef9e7', border: '1px solid #f9e79f', padding: '8px 12px', borderRadius: 6, marginBottom: 15, fontSize: '0.8rem', color: '#7d6608' }}>
-        ⚠️ <strong>Note:</strong> Only the <em>active tab</em> per browser window is visible. Hidden tabs require a Browser Extension (Phase 2).
-      </div>
-
-      {/* Active Browsers with Tabs */}
-      {Object.keys(byBrowser).length > 0 && (
-        <div style={{ marginBottom: 20 }}>
-          {Object.entries(byBrowser).map(([browser, tabs]) => (
-            <div key={browser} style={{ background: 'white', padding: 15, borderRadius: 10, marginBottom: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
-              <div style={{ fontWeight: 'bold', fontSize: '1rem', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: '1.3rem' }}>🌍</span>
-                {browser}
-                <span style={{ fontSize: '0.8rem', color: '#95a5a6', fontWeight: 'normal' }}>({tabs.length} tab{tabs.length > 1 ? 's' : ''})</span>
-              </div>
-              {tabs.map((tab, idx) => {
-                const catStyle = CATEGORY_STYLES[tab.category] || CATEGORY_STYLES.unknown;
-                return (
-                  <div key={idx} style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '8px 10px', marginBottom: 4,
-                    background: '#f8f9fa', borderRadius: 6,
-                    borderLeft: `3px solid ${catStyle.color}`
-                  }}>
-                    <span style={{ fontSize: '1.1rem' }}>{catStyle.icon}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {tab.pageTitle}
-                      </div>
-                      {tab.site && (
-                        <span style={{ fontSize: '0.7rem', color: '#95a5a6' }}>{tab.site}</span>
-                      )}
-                    </div>
-                    <span style={{
-                      fontSize: '0.65rem', padding: '2px 6px', whiteSpace: 'nowrap',
-                      background: catStyle.bg, color: catStyle.color,
-                      borderRadius: 3, fontWeight: 'bold'
-                    }}>{catStyle.label}</span>
-                  </div>
-                );
-              })}
+      {/* AUDIBLE ALERT — tabs playing audio */}
+      {audibleTabs.length > 0 && (
+        <div style={{
+          background: 'linear-gradient(135deg, #e74c3c, #c0392b)',
+          padding: 15, borderRadius: 10, color: 'white', marginBottom: 15,
+          boxShadow: '0 4px 15px rgba(231,76,60,0.3)'
+        }}>
+          <div style={{ fontWeight: 'bold', marginBottom: 8 }}>🔊 Audio Playing in Background!</div>
+          {audibleTabs.map((tab, idx) => (
+            <div key={idx} style={{ fontSize: '0.9rem', padding: '4px 0', opacity: 0.95 }}>
+              🎵 <strong>{tab.title}</strong>
+              <span style={{ opacity: 0.7 }}> — {tab.browser}</span>
             </div>
           ))}
         </div>
       )}
 
+      {/* Extension status / install guide */}
+      {!hasExtension && (
+        <div style={{ background: '#ebf5fb', border: '1px solid #aed6f1', padding: 15, borderRadius: 8, marginBottom: 15, fontSize: '0.85rem' }}>
+          <strong>📦 Install Extension for Full Tab Scanning:</strong>
+          <ol style={{ margin: '8px 0 0 0', paddingLeft: 20 }}>
+            <li>Open Chrome/Edge → go to <code>chrome://extensions</code></li>
+            <li>Enable "Developer mode" (top right toggle)</li>
+            <li>Click "Load unpacked" → select the <code>browser-extension</code> folder</li>
+            <li>Done! All tabs will be reported automatically.</li>
+          </ol>
+        </div>
+      )}
+
+      {/* ALL TABS from extension (Phase 2) */}
+      {hasExtension && allExtTabs.length > 0 && (
+        <div style={{ background: 'white', padding: 15, borderRadius: 10, marginBottom: 15, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+          <h3 style={{ marginTop: 0 }}>📑 All Open Tabs ({allExtTabs.length})</h3>
+          <div style={{ maxHeight: 350, overflow: 'auto' }}>
+            {allExtTabs.map((tab, idx) => {
+              const catStyle = CATEGORY_STYLES[tab.category] || CATEGORY_STYLES.unknown;
+              return (
+                <div key={idx} style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '6px 8px', marginBottom: 3,
+                  background: tab.audible ? '#fdedec' : (tab.active ? '#eaf2f8' : '#f8f9fa'),
+                  borderRadius: 5,
+                  borderLeft: `3px solid ${catStyle.color}`
+                }}>
+                  {tab.audible && <span title="Playing audio">🔊</span>}
+                  {tab.active && !tab.audible && <span title="Active tab">👁</span>}
+                  {!tab.active && !tab.audible && <span style={{ width: 16 }} />}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {tab.title || 'Untitled'}
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#aab7b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {tab.url}
+                    </div>
+                  </div>
+                  <span style={{
+                    fontSize: '0.6rem', padding: '1px 5px', whiteSpace: 'nowrap',
+                    background: catStyle.bg, color: catStyle.color,
+                    borderRadius: 3, fontWeight: 'bold'
+                  }}>{catStyle.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Fallback: Window titles (Phase 1 — when no extension) */}
+      {!hasExtension && windowData.browsers.length > 0 && (
+        <div style={{ background: 'white', padding: 15, borderRadius: 10, marginBottom: 15, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+          <h3 style={{ marginTop: 0 }}>🪟 Active Tabs (Window Titles)</h3>
+          <div style={{ background: '#fef9e7', padding: '6px 10px', borderRadius: 5, marginBottom: 10, fontSize: '0.75rem', color: '#7d6608' }}>
+            ⚠️ Only active tabs visible. Install extension to see ALL tabs.
+          </div>
+          {windowData.browsers.map((tab, idx) => {
+            const catStyle = CATEGORY_STYLES[tab.category] || CATEGORY_STYLES.unknown;
+            return (
+              <div key={idx} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '6px 8px', marginBottom: 3,
+                background: '#f8f9fa', borderRadius: 5,
+                borderLeft: `3px solid ${catStyle.color}`
+              }}>
+                <span>{catStyle.icon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {tab.pageTitle}
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: '#aab7b8' }}>{tab.browser}</span>
+                </div>
+                <span style={{
+                  fontSize: '0.6rem', padding: '1px 5px',
+                  background: catStyle.bg, color: catStyle.color,
+                  borderRadius: 3
+                }}>{catStyle.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Category Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 15 }}>
         {['entertainment', 'gaming', 'social', 'educational'].map(cat => {
           const style = CATEGORY_STYLES[cat];
           return (
-            <div key={cat} style={{ background: 'white', padding: 12, borderRadius: 8, textAlign: 'center', boxShadow: '0 2px 6px rgba(0,0,0,0.06)' }}>
-              <div style={{ fontSize: '1.5rem' }}>{style.icon}</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 'bold', color: style.color }}>{categoryCounts[cat] || 0}</div>
-              <div style={{ fontSize: '0.7rem', color: '#95a5a6' }}>{style.label}</div>
+            <div key={cat} style={{ background: 'white', padding: 10, borderRadius: 8, textAlign: 'center', boxShadow: '0 2px 6px rgba(0,0,0,0.06)' }}>
+              <div style={{ fontSize: '1.3rem' }}>{style.icon}</div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: style.color }}>{categoryCounts[cat] || 0}</div>
+              <div style={{ fontSize: '0.65rem', color: '#95a5a6' }}>{style.label}</div>
             </div>
           );
         })}
       </div>
 
-      {/* History Log */}
-      <div style={{ background: 'white', padding: 20, borderRadius: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
-        <h3 style={{ marginTop: 0 }}>📋 Browsing History (Session)</h3>
+      {/* History */}
+      <div style={{ background: 'white', padding: 15, borderRadius: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+        <h3 style={{ marginTop: 0 }}>📋 Browsing History ({history.length})</h3>
         {history.length === 0 ? (
-          <p style={{ color: '#95a5a6' }}>No browser activity recorded yet. Scanning every 5 seconds...</p>
+          <p style={{ color: '#95a5a6', fontSize: '0.9rem' }}>No activity recorded yet...</p>
         ) : (
-          <div style={{ maxHeight: 300, overflow: 'auto' }}>
+          <div style={{ maxHeight: 250, overflow: 'auto' }}>
             {history.map((entry, idx) => {
               const catStyle = CATEGORY_STYLES[entry.category] || CATEGORY_STYLES.unknown;
               return (
                 <div key={idx} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '6px 0', borderBottom: '1px solid #f5f5f5'
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '4px 0', borderBottom: '1px solid #f5f5f5', fontSize: '0.8rem'
                 }}>
                   <span>{catStyle.icon}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {entry.pageTitle}
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {entry.title || entry.pageTitle}
                     </div>
-                    <div style={{ fontSize: '0.7rem', color: '#bdc3c7' }}>
+                    <div style={{ fontSize: '0.65rem', color: '#bdc3c7' }}>
                       {entry.browser} {entry.site ? `• ${entry.site}` : ''} • {entry.timestamp}
                     </div>
                   </div>
-                  <span style={{
-                    fontSize: '0.6rem', padding: '1px 5px',
-                    background: catStyle.bg, color: catStyle.color,
-                    borderRadius: 3
-                  }}>{catStyle.label}</span>
                 </div>
               );
             })}
