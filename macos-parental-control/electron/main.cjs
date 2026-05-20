@@ -4,6 +4,15 @@ const fs = require('fs');
 const os = require('os');
 const http = require('http');
 const { exec, spawn } = require('child_process');
+
+// Gracefully handle EPIPE (broken pipe) errors on standard output streams (e.g. when terminal is detached)
+process.stdout.on('error', (err) => {
+  if (err.code === 'EPIPE') process.exit(0);
+});
+process.stderr.on('error', (err) => {
+  if (err.code === 'EPIPE') process.exit(0);
+});
+
 const { scanAllBrowserHistory } = require('./history-reader.cjs');
 const { analyzeHistory } = require('./content-analyzer.cjs');
 const { startStealthBlocker } = require('./stealth-blocker.cjs');
