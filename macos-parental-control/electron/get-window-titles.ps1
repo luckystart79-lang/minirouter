@@ -1,7 +1,8 @@
-# Use Win32 API EnumWindows to get ALL visible window titles
-# This catches EVERY browser window (multiple windows of same browser)
-# Limitation: only sees the active tab per window (tabs are internal browser UI)
+# Force UTF-8 output so Vietnamese/Unicode characters are preserved
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 
+# Use Win32 API EnumWindows with explicit Unicode (W) variants
 Add-Type @"
 using System;
 using System.Collections.Generic;
@@ -12,14 +13,14 @@ public class WindowEnumerator {
     [DllImport("user32.dll")]
     private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
-    [DllImport("user32.dll")]
-    private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextW(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
 
     [DllImport("user32.dll")]
     private static extern bool IsWindowVisible(IntPtr hWnd);
 
-    [DllImport("user32.dll")]
-    private static extern int GetWindowTextLength(IntPtr hWnd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextLengthW(IntPtr hWnd);
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -27,10 +28,10 @@ public class WindowEnumerator {
         var titles = new List<string>();
         EnumWindows((hWnd, lParam) => {
             if (IsWindowVisible(hWnd)) {
-                int length = GetWindowTextLength(hWnd);
+                int length = GetWindowTextLengthW(hWnd);
                 if (length > 0) {
                     var sb = new StringBuilder(length + 1);
-                    GetWindowText(hWnd, sb, sb.Capacity);
+                    GetWindowTextW(hWnd, sb, sb.Capacity);
                     string title = sb.ToString();
                     if (!string.IsNullOrWhiteSpace(title)) {
                         titles.Add(title);
@@ -49,7 +50,7 @@ foreach ($t in $titles) {
     Write-Output "TITLE:$t"
 }
 
-# Part 2: Check DNS cache for YouTube background streaming
+# Check DNS cache for YouTube background streaming
 try {
     $dnsCache = Get-DnsClientCache -ErrorAction SilentlyContinue |
         Where-Object { $_.Entry -match 'youtube|googlevideo|ytimg' } |

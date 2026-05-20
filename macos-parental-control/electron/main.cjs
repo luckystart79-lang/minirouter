@@ -212,11 +212,23 @@ ipcMain.handle('kill-apps', async (event, targetApps) => {
 
 // --- Browser Activity Monitoring (ALL browsers, ALL content) --- //
 
-// Known browser suffixes in window titles
-const BROWSER_SUFFIXES = [
-  'google chrome', 'mozilla firefox', 'microsoft\u00ae edge', 'microsoft edge',
-  'opera', 'brave', 'vivaldi', 'safari', 'arc', 'chromium', 'waterfox',
-  'comet', 'zen browser', 'tor browser'
+// Known browser patterns in window titles
+// Use regex to handle special chars (®, zero-width spaces, etc.)
+const BROWSER_PATTERNS = [
+  { regex: /google\s*chrome/i, name: 'Google Chrome' },
+  { regex: /mozilla\s*firefox/i, name: 'Mozilla Firefox' },
+  { regex: /microsoft.{0,3}edge/i, name: 'Microsoft Edge' },  // handles ®, ​, etc.
+  { regex: /\bopera\b/i, name: 'Opera' },
+  { regex: /\bbrave\b/i, name: 'Brave' },
+  { regex: /\bvivaldi\b/i, name: 'Vivaldi' },
+  { regex: /\bsafari\b/i, name: 'Safari' },
+  { regex: /\barc\b/i, name: 'Arc' },
+  { regex: /\bchromium\b/i, name: 'Chromium' },
+  { regex: /\bwaterfox\b/i, name: 'Waterfox' },
+  { regex: /\bcomet\b/i, name: 'Comet' },
+  { regex: /zen\s*browser/i, name: 'Zen Browser' },
+  { regex: /tor\s*browser/i, name: 'Tor Browser' },
+  { regex: /\bcoc\s*coc\b/i, name: 'Coc Coc' },
 ];
 
 // Website classification rules
@@ -275,11 +287,9 @@ const CONTENT_KEYWORDS = {
 };
 
 function detectBrowser(title) {
-  const lower = title.toLowerCase();
-  for (const suffix of BROWSER_SUFFIXES) {
-    if (lower.includes(suffix)) {
-      // Extract browser name nicely
-      return suffix.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  for (const bp of BROWSER_PATTERNS) {
+    if (bp.regex.test(title)) {
+      return bp.name;
     }
   }
   return null;
@@ -305,13 +315,15 @@ function classifyContent(title) {
   return 'unknown';
 }
 
-function extractPageTitle(fullTitle, browser) {
+function extractPageTitle(fullTitle) {
   // Remove browser suffix: "Page Title - Google Chrome" -> "Page Title"
-  const lower = fullTitle.toLowerCase();
-  for (const suffix of BROWSER_SUFFIXES) {
-    const idx = lower.lastIndexOf(suffix);
-    if (idx > 0) {
-      return fullTitle.substring(0, idx).replace(/\s*[-–—]\s*$/, '').trim();
+  for (const bp of BROWSER_PATTERNS) {
+    const match = fullTitle.match(bp.regex);
+    if (match) {
+      const idx = fullTitle.indexOf(match[0]);
+      if (idx > 0) {
+        return fullTitle.substring(0, idx).replace(/\s*[-–—]\s*$/, '').trim();
+      }
     }
   }
   return fullTitle;
@@ -324,12 +336,12 @@ ipcMain.handle('check-browser-activity', async () => {
     let command;
     if (isWin) {
       const scriptPath = path.join(__dirname, 'get-window-titles.ps1');
-      command = `powershell -ExecutionPolicy Bypass -File "${scriptPath}"`;
+      command = `cmd /c "chcp 65001 >nul & powershell -ExecutionPolicy Bypass -File "${scriptPath}""`;
     } else {
       command = `osascript -e 'tell application "System Events" to get name of every window of every process'`;
     }
 
-    exec(command, { timeout: 10000 }, (error, stdout) => {
+    exec(command, { timeout: 10000, encoding: 'utf8' }, (error, stdout) => {
       if (error || !stdout.trim()) {
         resolve({ browsers: [], hasYouTubeStream: false });
         return;
