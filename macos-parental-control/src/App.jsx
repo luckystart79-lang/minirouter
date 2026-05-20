@@ -81,7 +81,7 @@ export default function App() {
       </div>
 
       <div style={{ flex: 1, padding: '20px', background: '#ecf0f1' }}>
-        {activeTab === 'dashboard' && <Dashboard quota={quota} />}
+        {activeTab === 'dashboard' && <Dashboard quota={quota} blockedApps={blockedApps} />}
         {activeTab === 'learning' && <Learning onEarnBonus={addBonusTime} />}
         {activeTab === 'settings' && <Settings blockedApps={blockedApps} setBlockedApps={setBlockedApps} />}
       </div>
