@@ -73,5 +73,18 @@ scripts/agSniffer/*
 gitbooks/*
 gitbook/README.md
 
+# remote-agent
+remote-agent/node_modules/
+remote-agent/.env
+remote-agent/.downloads/
+
+# Cloned skill repos (not part of this project)
+gstack/
+claude-seo/
+marketingskills/
+
+.chrome-shot-profile/
+*.png
+
 # macOS Parental Control project (moved to its own independent private repo)
 /macos-parental-control/
