@@ -184,7 +184,13 @@ function registerPath(fullPath) {
 
 // ── Bot Setup ───────────────────────────────────────────────────
 
-const bot = new TelegramBot(CONFIG.token, { polling: true });
+const botOptions = { polling: true };
+const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.all_proxy || process.env.ALL_PROXY;
+if (proxyUrl) {
+  botOptions.request = { proxy: proxyUrl };
+}
+
+const bot = new TelegramBot(CONFIG.token, botOptions);
 
 console.log("🚀 9Router Remote Agent starting...");
 console.log(`   Gemini CLI: ${CONFIG.geminiCmd}`);
@@ -193,6 +199,9 @@ console.log(`   Workspaces: ${Object.keys(CONFIG.workspaces).join(", ") || "none
 console.log(`   Allowed users: ${CONFIG.allowedUsers.join(", ") || "ALL"}`);
 console.log(`   🛡️ PIN: ${CONFIG.sessionPin ? "enabled" : "⚠️ DISABLED"}`);
 console.log(`   🔒 Auto-lock: ${CONFIG.autoLockMinutes}min`);
+if (proxyUrl) {
+  console.log(`   🌐 Proxy: ${proxyUrl}`);
+}
 
 bot.setMyCommands([
   { command: "cd", description: "📁 Browse & chọn workspace" },
@@ -1398,6 +1407,15 @@ const bridgeServer = http.createServer(async (req, res) => {
       res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
     }
   });
+});
+
+bridgeServer.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(`❌ Error: Port ${CONFIG.bridgePort} is already in use. Is another instance of agent.js running?`);
+    process.exit(1);
+  } else {
+    console.error(`❌ Bridge API server error: ${err.message}`);
+  }
 });
 
 bridgeServer.listen(CONFIG.bridgePort, "127.0.0.1", () => {

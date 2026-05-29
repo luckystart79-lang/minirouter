@@ -77,6 +77,8 @@ gitbook/README.md
 remote-agent/node_modules/
 remote-agent/.env
 remote-agent/.downloads/
+remote-agent/audit.log
+remote-agent/*.log
 
 # Cloned skill repos (not part of this project)
 gstack/
