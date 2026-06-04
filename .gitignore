@@ -79,11 +79,16 @@ remote-agent/.env
 remote-agent/.downloads/
 remote-agent/audit.log
 remote-agent/*.log
+remote-agent/data/
+remote-agent/.downloads/
 
 # Cloned skill repos (not part of this project)
 gstack/
 claude-seo/
 marketingskills/
+9remote/
+browser-harness/
+everything-claude-code/
 
 .chrome-shot-profile/
 *.png

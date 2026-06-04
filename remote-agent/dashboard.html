@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Remote Agent Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0f0f1a;
+      --bg-secondary: #1a1a2e;
+      --bg-card: #16213e;
+      --bg-card-hover: #1a2744;
+      --accent: #00d4ff;
+      --accent-dim: #0099bb;
+      --accent-glow: rgba(0, 212, 255, 0.15);
+      --success: #00e676;
+      --warning: #ffab40;
+      --error: #ff5252;
+      --text-primary: #e8eaf6;
+      --text-secondary: #9e9eb8;
+      --border: rgba(255, 255, 255, 0.06);
+      --font: 'Inter', -apple-system, sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, var(--bg-secondary), var(--bg-card));
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(20px);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header-logo {
+      font-size: 24px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), #7c4dff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header-subtitle {
+      color: var(--text-secondary);
+      font-size: 13px;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .status-online {
+      background: rgba(0, 230, 118, 0.1);
+      color: var(--success);
+      border: 1px solid rgba(0, 230, 118, 0.2);
+    }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* Grid Layout */
+    .dashboard {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      padding: 24px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    @media (max-width: 900px) {
+      .dashboard { grid-template-columns: 1fr; }
+    }
+
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      transition: border-color 0.3s, box-shadow 0.3s;
+    }
+
+    .card:hover {
+      border-color: rgba(0, 212, 255, 0.15);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    .card-header {
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .card-body {
+      padding: 16px 20px;
+    }
+
+    .card-full { grid-column: 1 / -1; }
+
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      grid-column: 1 / -1;
+    }
+
+    @media (max-width: 900px) {
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+      transition: transform 0.2s, border-color 0.3s;
+    }
+
+    .stat-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(0, 212, 255, 0.2);
+    }
+
+    .stat-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1.2;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Task List */
+    .task-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.02);
+      margin-bottom: 8px;
+      transition: background 0.2s;
+    }
+
+    .task-item:hover { background: rgba(255, 255, 255, 0.04); }
+
+    .task-id {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent);
+      background: var(--accent-glow);
+      padding: 3px 8px;
+      border-radius: 6px;
+      min-width: 36px;
+      text-align: center;
+    }
+
+    .task-prompt {
+      flex: 1;
+      font-size: 13px;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .task-elapsed {
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    .empty-state .icon { font-size: 32px; margin-bottom: 8px; }
+
+    /* History List */
+    .history-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      margin-bottom: 6px;
+      background: rgba(255, 255, 255, 0.02);
+      transition: background 0.2s;
+      cursor: pointer;
+    }
+
+    .history-item:hover { background: rgba(255, 255, 255, 0.05); }
+
+    .history-status {
+      font-size: 16px;
+      min-width: 20px;
+      text-align: center;
+      line-height: 1.4;
+    }
+
+    .history-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .history-prompt {
+      font-size: 13px;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .history-meta {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+
+    /* Quick Actions */
+    .actions-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .action-btn {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 12px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: var(--text-primary);
+      font-family: var(--font);
+      font-size: 12px;
+    }
+
+    .action-btn:hover {
+      background: var(--accent-glow);
+      border-color: rgba(0, 212, 255, 0.3);
+      transform: translateY(-1px);
+    }
+
+    .action-btn .icon {
+      font-size: 22px;
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    /* Log output */
+    .log-container {
+      max-height: 300px;
+      overflow-y: auto;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 8px;
+      padding: 12px;
+      font-family: 'JetBrains Mono', 'Consolas', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+    }
+
+    .log-container::-webkit-scrollbar { width: 6px; }
+    .log-container::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+
+    .log-line { white-space: pre-wrap; word-break: break-all; }
+    .log-line.error { color: var(--error); }
+    .log-line.success { color: var(--success); }
+    .log-line.info { color: var(--accent); }
+
+    /* Refresh animation */
+    .refreshing { opacity: 0.5; transition: opacity 0.2s; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <span class="header-logo">Remote Agent</span>
+      <span class="header-subtitle">Dashboard</span>
+    </div>
+    <div id="statusBadge" class="status-badge status-online">
+      <span class="status-dot"></span>
+      <span>Online</span>
+    </div>
+  </div>
+
+  <div class="dashboard">
+    <!-- Stats Row -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-value" id="statUptime">0h</div>
+        <div class="stat-label">Uptime</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statTasks">0</div>
+        <div class="stat-label">Active Tasks</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statHistory">0</div>
+        <div class="stat-label">Total Commands</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statCli">—</div>
+        <div class="stat-label">Active CLI</div>
+      </div>
+    </div>
+
+    <!-- Active Tasks -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">⚡ Active Tasks</span>
+      </div>
+      <div class="card-body" id="taskList">
+        <div class="empty-state">
+          <div class="icon">✅</div>
+          No active tasks
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🎮 Quick Actions</span>
+      </div>
+      <div class="card-body">
+        <div class="actions-grid">
+          <button class="action-btn" onclick="sendAction('screenshot')">
+            <span class="icon">📸</span>Screenshot
+          </button>
+          <button class="action-btn" onclick="sendAction('sysinfo')">
+            <span class="icon">💻</span>Sys Info
+          </button>
+          <button class="action-btn" onclick="sendAction('ip')">
+            <span class="icon">🌐</span>Public IP
+          </button>
+          <button class="action-btn" onclick="promptCommand()">
+            <span class="icon">⚡</span>Run Command
+          </button>
+          <button class="action-btn" onclick="sendAction('status')">
+            <span class="icon">📊</span>Status
+          </button>
+          <button class="action-btn" onclick="sendAction('tasks')">
+            <span class="icon">📋</span>Tasks
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Command History -->
+    <div class="card card-full">
+      <div class="card-header">
+        <span class="card-title">📜 Recent Commands</span>
+      </div>
+      <div class="card-body" id="historyList">
+        <div class="empty-state">
+          <div class="icon">📭</div>
+          No command history yet
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = `http://${location.hostname}:${location.port || 3847}`;
+    let autoRefresh;
+
+    async function fetchData() {
+      try {
+        const res = await fetch(`${API}/api/dashboard`);
+        if (!res.ok) throw new Error('API error');
+        return await res.json();
+      } catch (e) {
+        console.error('Dashboard fetch error:', e);
+        return null;
+      }
+    }
+
+    function formatUptime(seconds) {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      return h > 0 ? `${h}h${m}m` : `${m}m`;
+    }
+
+    async function refresh() {
+      const data = await fetchData();
+      if (!data) return;
+
+      // Stats
+      document.getElementById('statUptime').textContent = formatUptime(data.uptime);
+      document.getElementById('statTasks').textContent = data.tasks.length;
+      document.getElementById('statHistory').textContent = data.historyCount;
+      document.getElementById('statCli').textContent = data.activeCli;
+
+      // Tasks
+      const taskEl = document.getElementById('taskList');
+      if (data.tasks.length === 0) {
+        taskEl.innerHTML = '<div class="empty-state"><div class="icon">✅</div>No active tasks</div>';
+      } else {
+        taskEl.innerHTML = data.tasks.map(t => `
+          <div class="task-item">
+            <span class="task-id">#${t.id}</span>
+            <span class="task-prompt">${escHtml(t.prompt)}</span>
+            <span class="task-elapsed">${t.elapsed}s</span>
+          </div>
+        `).join('');
+      }
+
+      // History
+      const histEl = document.getElementById('historyList');
+      if (data.history.length === 0) {
+        histEl.innerHTML = '<div class="empty-state"><div class="icon">📭</div>No command history yet</div>';
+      } else {
+        histEl.innerHTML = data.history.map(h => `
+          <div class="history-item" title="${escHtml(h.output?.substring(0, 200) || '')}">
+            <span class="history-status">${h.exitCode === 0 ? '✅' : '⚠️'}</span>
+            <div class="history-content">
+              <div class="history-prompt">${escHtml(h.prompt)}</div>
+              <div class="history-meta">${h.cli} · ${h.workspace} · ${h.elapsed}s · ${new Date(h.timestamp).toLocaleString('vi-VN')}</div>
+            </div>
+          </div>
+        `).join('');
+      }
+    }
+
+    function escHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str || '';
+      return div.innerHTML;
+    }
+
+    async function sendAction(action) {
+      try {
+        const res = await fetch(`${API}/api/dashboard/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          setTimeout(refresh, 1000);
+        }
+      } catch (e) {
+        console.error('Action error:', e);
+      }
+    }
+
+    function promptCommand() {
+      const cmd = prompt('Enter shell command:');
+      if (cmd) {
+        fetch(`${API}/api/run-command`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: cmd, silent: true })
+        }).then(r => r.json()).then(data => {
+          if (data.output) alert(data.output.substring(0, 2000));
+        }).catch(e => alert('Error: ' + e.message));
+      }
+    }
+
+    // Auto-refresh every 5s
+    refresh();
+    autoRefresh = setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

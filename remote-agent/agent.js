@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * 9Router Remote Agent — Telegram ↔ AI CLI Bridge + System API
+ * Remote Agent — Telegram ↔ AI CLI Bridge + System API
  *
  * Chat from your phone on Telegram → AI CLI executes on your PC → results sent back.
  * Includes a local HTTP API bridge so AI CLI can trigger system actions
@@ -34,6 +34,10 @@
  *   POST /api/notify          — {message} → send message to Telegram
  *   POST /api/send-text       — {content, filename?} → send text as file
  */
+
+// Clean stale environment variables from previous MITM configuration
+delete process.env.NODE_EXTRA_CA_CERTS;
+delete process.env.GRPC_DEFAULT_SSL_ROOTS_FILE_PATH;
 
 require("dotenv").config();
 const crypto = require("crypto");
@@ -68,10 +72,20 @@ if (!CONFIG.token) {
 
 // ── State ───────────────────────────────────────────────────────
 
-let currentTask = null;
+// Task management — multi-session support
+const taskMap = new Map(); // taskId → { process, chatId, startTime, prompt, workspace }
+let taskIdCounter = 0;
 let currentWorkspace = CONFIG.defaultWorkspace;
 const TELEGRAM_MAX_LEN = 4000;
 const PAGE_SIZE = 20;
+const MAX_CONCURRENT_TASKS = 3;
+
+// Streaming config
+const STREAM_INTERVAL_MS = 3000; // edit message every 3s
+const STREAM_MIN_DELTA = 30; // minimum chars change to trigger edit
+
+// Last uploaded file — persists across messages so next prompt can reference it
+let lastUploadedFile = null; // { path, name, timestamp }
 
 // ── Security State ──────────────────────────────────────────────
 
@@ -203,14 +217,42 @@ if (proxyUrl) {
   console.log(`   🌐 Proxy: ${proxyUrl}`);
 }
 
+// ── Skill System ───────────────────────────────────────────────
+const { loadSkills } = require("./skills/loader");
+const skillContext = {
+  bot,
+  config: CONFIG,
+  getState: () => ({
+    currentWorkspace,
+    activeCli,
+    hasSession,
+    taskMap,
+    taskIdCounter,
+  }),
+  setState: (partial) => {
+    if (partial.currentWorkspace !== undefined) currentWorkspace = partial.currentWorkspace;
+    if (partial.activeCli !== undefined) activeCli = partial.activeCli;
+    if (partial.hasSession !== undefined) hasSession = partial.hasSession;
+  },
+  isAllowed,
+  isSessionActive,
+  auditLog,
+  utils: { stripAnsi, escapeMarkdown, chunkText, execPromise },
+};
+console.log(`   🧩 Loading skills...`);
+const { loaded: loadedSkills, failed: failedSkills, instances: skillInstances } = loadSkills(skillContext);
+console.log(`   🧩 Skills: ${loadedSkills.length} loaded, ${failedSkills.length} failed`);
+
 bot.setMyCommands([
   { command: "cd", description: "📁 Browse & chọn workspace" },
   { command: "cli", description: "🔧 Switch CLI (gemini/codex)" },
   { command: "pwd", description: "📂 Xem workspace & CLI hiện tại" },
   { command: "new", description: "🆕 Session mới" },
-  { command: "stop", description: "⛔ Hủy task" },
+  { command: "stop", description: "⛔ Hủy task [id]" },
+  { command: "tasks", description: "📋 Danh sách task đang chạy" },
   { command: "status", description: "📊 Trạng thái" },
   { command: "file", description: "📎 Gửi file từ PC" },
+  { command: "save", description: "💾 Lưu file từ Telegram vào workspace" },
   { command: "run", description: "⚡ Chạy lệnh shell" },
   { command: "py", description: "🐍 Chạy Python" },
   { command: "screen", description: "📸 Chụp màn hình" },
@@ -338,26 +380,66 @@ bot.onText(/\/start/, (msg) => {
   );
 });
 
-// ── /stop ───────────────────────────────────────────────────────
+// ── /stop [id] — cancel task ────────────────────────────────────
 
-bot.onText(/\/stop/, (msg) => {
+bot.onText(/\/stop\s*(\d*)/, (msg, match) => {
   if (!isAllowed(msg.from.id)) return;
-  if (currentTask) {
-    currentTask.process.kill("SIGTERM");
-    currentTask = null;
-    bot.sendMessage(msg.chat.id, "⛔ Task đã bị hủy.");
-  } else {
-    bot.sendMessage(msg.chat.id, "ℹ️ Không có task nào đang chạy.");
+  const targetId = match[1] ? parseInt(match[1]) : null;
+
+  if (taskMap.size === 0) {
+    return bot.sendMessage(msg.chat.id, "ℹ️ Không có task nào đang chạy.");
   }
+
+  if (targetId !== null) {
+    // Stop specific task
+    const task = taskMap.get(targetId);
+    if (task) {
+      task.process.kill("SIGTERM");
+      taskMap.delete(targetId);
+      bot.sendMessage(msg.chat.id, `⛔ Task #${targetId} đã bị hủy.`);
+    } else {
+      bot.sendMessage(msg.chat.id, `❌ Không tìm thấy task #${targetId}. Dùng /tasks để xem danh sách.`);
+    }
+  } else if (taskMap.size === 1) {
+    // Only one task, stop it
+    const [id, task] = [...taskMap.entries()][0];
+    task.process.kill("SIGTERM");
+    taskMap.delete(id);
+    bot.sendMessage(msg.chat.id, `⛔ Task #${id} đã bị hủy.`);
+  } else {
+    // Multiple tasks, ask user to specify
+    const list = [...taskMap.entries()].map(([id, t]) => {
+      const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
+      return `  #${id} — ${t.prompt.substring(0, 40)}... (${elapsed}s)`;
+    }).join("\n");
+    bot.sendMessage(msg.chat.id, `⚠️ Có ${taskMap.size} task đang chạy. Chỉ định ID:\n${list}\n\nDùng: /stop <id>`);
+  }
+});
+
+// ── /tasks — list running tasks ─────────────────────────────────
+
+bot.onText(/\/tasks/, (msg) => {
+  if (!isAllowed(msg.from.id)) return;
+  if (taskMap.size === 0) {
+    return bot.sendMessage(msg.chat.id, "✅ Không có task nào đang chạy.");
+  }
+  const list = [...taskMap.entries()].map(([id, t]) => {
+    const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
+    return `🔹 #${id} — ${CLI_BACKENDS[activeCli].name} (${elapsed}s)\n   📂 ${path.basename(t.workspace)}\n   💬 ${t.prompt.substring(0, 60)}`;
+  }).join("\n\n");
+  bot.sendMessage(msg.chat.id, `📋 *Task đang chạy (${taskMap.size}/${MAX_CONCURRENT_TASKS}):*\n\n${list}`, { parse_mode: "Markdown" });
 });
 
 // ── /status ─────────────────────────────────────────────────────
 
 bot.onText(/\/status/, (msg) => {
   if (!isAllowed(msg.from.id)) return;
-  if (currentTask) {
-    const elapsed = Math.floor((Date.now() - currentTask.startTime) / 1000);
-    bot.sendMessage(msg.chat.id, `⏳ Đang chạy (${elapsed}s)...\n🔧 ${CLI_BACKENDS[activeCli].name}\n📂 \`${currentWorkspace}\``);
+  if (taskMap.size > 0) {
+    const list = [...taskMap.entries()].map(([id, t]) => {
+      const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
+      return `  #${id} (${elapsed}s) — ${t.prompt.substring(0, 40)}`;
+    }).join("\n");
+    bot.sendMessage(msg.chat.id, `⏳ *${taskMap.size} task đang chạy:*\n${list}\n\n🔧 ${CLI_BACKENDS[activeCli].name}\n📂 \`${currentWorkspace}\``, { parse_mode: "Markdown" });
   } else {
     bot.sendMessage(msg.chat.id, `✅ Sẵn sàng\n🔧 ${CLI_BACKENDS[activeCli].name}\n📂 \`${currentWorkspace}\`\n🧠 Session: ${hasSession ? "active" : "new"}`);
   }
@@ -842,7 +924,59 @@ bot.onText(/\/cat\s+(.+)/, async (msg, match) => {
 
 // ── Main message handler ────────────────────────────────────────
 
-const SKIP_COMMANDS = ["/start", "/stop", "/status", "/cd", "/pwd", "/new", "/cli", "/file", "/run", "/py", "/screen", "/web", "/ls", "/cat", "/get", "/unlock", "/lock"];
+const SKIP_COMMANDS = ["/start", "/stop", "/status", "/tasks", "/cd", "/pwd", "/new", "/cli", "/file", "/run", "/py", "/screen", "/web", "/ls", "/cat", "/get", "/unlock", "/lock", "/save"];
+
+// ── /save — save file from Telegram to workspace ────────────────
+
+bot.onText(/\/save(.*)/, async (msg, match) => {
+  if (!isAllowed(msg.from.id)) return;
+  // This is handled via reply — user replies to a file/photo with /save [name]
+  const replyMsg = msg.reply_to_message;
+  if (!replyMsg || (!replyMsg.photo && !replyMsg.document)) {
+    return bot.sendMessage(msg.chat.id, "💡 Reply vào một file/ảnh và gõ `/save [tên]` để lưu vào workspace.", { parse_mode: "Markdown" });
+  }
+  const customName = (match[1] || "").trim();
+  await saveFileFromTelegram(msg.chat.id, replyMsg, customName);
+});
+
+async function saveFileFromTelegram(chatId, msg, customName = "") {
+  const uploadsDir = path.join(__dirname, '.downloads');
+  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+  let fileId, originalName;
+  if (msg.document) {
+    fileId = msg.document.file_id;
+    originalName = msg.document.file_name || `file_${Date.now()}`;
+  } else if (msg.photo) {
+    fileId = msg.photo[msg.photo.length - 1].file_id;
+    originalName = `photo_${Date.now()}.jpg`;
+  } else {
+    return bot.sendMessage(chatId, "❌ Không tìm thấy file/ảnh.");
+  }
+
+  const saveName = customName || originalName;
+  const statusMsg = await bot.sendMessage(chatId, `📥 Đang lưu \`${saveName}\` vào workspace...`, { parse_mode: "Markdown" });
+
+  try {
+    const downloadedPath = await bot.downloadFile(fileId, uploadsDir);
+    // Rename to desired name
+    const finalPath = path.join(uploadsDir, saveName);
+    if (downloadedPath !== finalPath) {
+      fs.renameSync(downloadedPath, finalPath);
+    }
+    // Remember this file for the next prompt
+    lastUploadedFile = { path: finalPath, name: saveName, timestamp: Date.now() };
+    bot.editMessageText(
+      `✅ Đã lưu!\n📂 \`${finalPath}\`\n\n💡 Gõ tin nhắn tiếp theo để AI đọc file này.`,
+      { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "Markdown" }
+    ).catch(() => {});
+    auditLog(msg.from?.id || "bridge", "FILE_UPLOAD", finalPath);
+  } catch (e) {
+    bot.editMessageText(`❌ Lỗi lưu file: ${e.message}`, {
+      chat_id: chatId, message_id: statusMsg.message_id
+    }).catch(() => {});
+  }
+}
 
 bot.on("message", async (msg) => {
   if (!msg.text && !msg.photo && !msg.document) return;
@@ -854,6 +988,12 @@ bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   if (!isAllowed(msg.from.id)) {
     return bot.sendMessage(chatId, `🚫 Không có quyền. ID: \`${msg.from.id}\``, { parse_mode: "Markdown" });
+  }
+
+  // ── File upload from Telegram → PC (no AI prompt) ─────────
+  // If user sends a file/photo WITHOUT any caption text → save to workspace
+  if ((msg.photo || msg.document) && !promptText.trim()) {
+    return saveFileFromTelegram(chatId, msg);
   }
 
   // Intercept /ui command — POST to 9Router Bridge extension with workspace targeting
@@ -949,15 +1089,20 @@ bot.on("message", async (msg) => {
     }
   }
 
-  if (currentTask) {
-    const elapsed = Math.floor((Date.now() - currentTask.startTime) / 1000);
-    return bot.sendMessage(chatId, `⏳ Đang bận (${elapsed}s). /stop để hủy.`);
+  // Multi-session: check concurrent limit
+  if (taskMap.size >= MAX_CONCURRENT_TASKS) {
+    const list = [...taskMap.entries()].map(([id, t]) => {
+      const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
+      return `  #${id} (${elapsed}s)`;
+    }).join("\n");
+    return bot.sendMessage(chatId, `⚠️ Đã đạt giới hạn ${MAX_CONCURRENT_TASKS} task song song:\n${list}\n\n/stop <id> để hủy task.`);
   }
 
-  // Handle file/image download
+  // Handle file/image download for AI context
   let attachedFilePath = "";
   if (msg.photo || msg.document) {
-    const statusMsg = await bot.sendMessage(chatId, `📥 Đang tải file/ảnh...`);
+    // File sent WITH caption text → download for AI
+    const dlStatusMsg = await bot.sendMessage(chatId, `📥 Đang tải file/ảnh...`);
     try {
       const downloadsDir = path.join(__dirname, '.downloads');
       if (!fs.existsSync(downloadsDir)) fs.mkdirSync(downloadsDir, { recursive: true });
@@ -970,10 +1115,19 @@ bot.on("message", async (msg) => {
       }
       
       attachedFilePath = await bot.downloadFile(fileId, downloadsDir);
-      bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+      lastUploadedFile = null; // clear — we’re using inline attachment
+      bot.deleteMessage(chatId, dlStatusMsg.message_id).catch(() => {});
     } catch (e) {
-      return bot.editMessageText(`❌ Lỗi tải file: ${e.message}`, { chat_id: chatId, message_id: statusMsg.message_id }).catch(() => {});
+      return bot.editMessageText(`❌ Lỗi tải file: ${e.message}`, { chat_id: chatId, message_id: dlStatusMsg.message_id }).catch(() => {});
     }
+  } else if (lastUploadedFile) {
+    // No file in this message, but a file was uploaded recently → attach it
+    const elapsed = Date.now() - lastUploadedFile.timestamp;
+    if (elapsed < 10 * 60 * 1000 && fs.existsSync(lastUploadedFile.path)) {
+      attachedFilePath = lastUploadedFile.path;
+      console.log(`📎 Auto-attaching last uploaded file: ${attachedFilePath}`);
+    }
+    lastUploadedFile = null; // consume — only attach once
   }
 
   // Parse workspace shortcut: /alias prompt
@@ -991,10 +1145,11 @@ bot.on("message", async (msg) => {
   // Use --resume latest if we already have a session in this workspace
   const resume = hasSession;
   const cli = CLI_BACKENDS[activeCli];
+  const taskId = ++taskIdCounter;
 
   const safePrompt = prompt.substring(0, 80).replace(/([_*`\[])/g, '\\$1') + (prompt.length > 80 ? "..." : "");
   const statusMsg = await bot.sendMessage(chatId,
-    `🔄 *Đang xử lý...*${resume ? " (tiếp tục)" : ""} \`${cli.name}\`\n📂 \`${path.basename(workspace)}\`\n💬 ${safePrompt}`,
+    `🔄 *#${taskId} Đang xử lý...*${resume ? " (tiếp tục)" : ""} \`${cli.name}\`\n📂 \`${path.basename(workspace)}\`\n💬 ${safePrompt}`,
     { parse_mode: "Markdown" }
   );
 
@@ -1002,23 +1157,34 @@ bot.on("message", async (msg) => {
   const typingInterval = setInterval(() => bot.sendChatAction(chatId, "typing"), 4000);
 
   try {
-    const result = await runCLI(prompt, workspace, chatId, resume, attachedFilePath);
+    const result = await runCLI(prompt, workspace, chatId, resume, attachedFilePath, taskId, statusMsg.message_id);
     clearInterval(typingInterval);
     hasSession = true;
     await sendResult(chatId, statusMsg.message_id, result);
+    // Save to conversation memory
+    const memorySkill = skillInstances.get("Memory");
+    if (memorySkill) {
+      memorySkill.addEntry({
+        prompt, cli: cli.name, workspace,
+        exitCode: result.exitCode, elapsed: result.elapsed,
+        output: result.output
+      });
+    }
   } catch (err) {
     clearInterval(typingInterval);
-    bot.editMessageText(`❌ Lỗi: ${escapeMarkdown(err.message)}`, {
+    bot.editMessageText(`❌ #${taskId} Lỗi: ${escapeMarkdown(err.message)}`, {
       chat_id: chatId, message_id: statusMsg.message_id, parse_mode: "Markdown"
     }).catch(() => { });
+  } finally {
+    taskMap.delete(taskId);
   }
 });
 
 
 
-// ── Generic CLI Runner ──────────────────────────────────────────
+// ── Generic CLI Runner (with streaming) ─────────────────────────
 
-function runCLI(prompt, workspace, chatId, resume = false, attachedFilePath = "") {
+function runCLI(prompt, workspace, chatId, resume = false, attachedFilePath = "", taskId = 0, statusMsgId = null) {
   return new Promise((resolve, reject) => {
     const output = [];
     const startTime = Date.now();
@@ -1065,7 +1231,28 @@ function runCLI(prompt, workspace, chatId, resume = false, attachedFilePath = ""
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    currentTask = { process: proc, chatId, startTime };
+    // Register in task map
+    taskMap.set(taskId, { process: proc, chatId, startTime, prompt, workspace });
+
+    // ── Streaming output — edit Telegram message every few seconds ──
+    let lastStreamLen = 0;
+    let streamTimer = null;
+    if (statusMsgId) {
+      streamTimer = setInterval(() => {
+        const currentOutput = stripAnsi(output.join("")).trim();
+        if (currentOutput.length - lastStreamLen < STREAM_MIN_DELTA) return;
+        lastStreamLen = currentOutput.length;
+
+        // Show last ~800 chars of output (most recent is most relevant)
+        const tail = currentOutput.length > 800 ? "..." + currentOutput.slice(-800) : currentOutput;
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const safe = tail.replace(/```/g, "'''").replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
+        bot.editMessageText(
+          `⏳ *#${taskId}* \`${cli.name}\` (${elapsed}s)\n\`\`\`\n${safe.substring(0, TELEGRAM_MAX_LEN - 200)}\n\`\`\``,
+          { chat_id: chatId, message_id: statusMsgId, parse_mode: "Markdown" }
+        ).catch(() => {}); // ignore edit errors (rate limit, no change, etc)
+      }, STREAM_INTERVAL_MS);
+    }
 
     proc.stdout.on("data", (data) => output.push(data.toString()));
     proc.stderr.on("data", (data) => {
@@ -1086,7 +1273,8 @@ function runCLI(prompt, workspace, chatId, resume = false, attachedFilePath = ""
 
     proc.on("close", (code) => {
       clearTimeout(timeout);
-      currentTask = null;
+      if (streamTimer) clearInterval(streamTimer);
+      taskMap.delete(taskId);
       let finalOutput = output.join("");
 
       // If Codex was used with an output file, read it instead of stdout
@@ -1104,7 +1292,8 @@ function runCLI(prompt, workspace, chatId, resume = false, attachedFilePath = ""
 
     proc.on("error", (err) => {
       clearTimeout(timeout);
-      currentTask = null;
+      if (streamTimer) clearInterval(streamTimer);
+      taskMap.delete(taskId);
       reject(err.code === "ENOENT" ? new Error(`'${CONFIG.geminiCmd}' not found`) : err);
     });
   });
@@ -1303,6 +1492,44 @@ const bridgeServer = http.createServer(async (req, res) => {
       res.writeHead(200);
       return res.end(JSON.stringify({ prompt }));
     }
+
+    // Dashboard — serve HTML
+    if (req.url === "/" || req.url === "/dashboard") {
+      const dashboardPath = path.join(__dirname, "dashboard.html");
+      if (fs.existsSync(dashboardPath)) {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.writeHead(200);
+        return res.end(fs.readFileSync(dashboardPath, "utf-8"));
+      }
+      res.writeHead(404);
+      return res.end("Dashboard not found");
+    }
+
+    // Dashboard API — status data
+    if (req.url === "/api/dashboard") {
+      const memorySkill = skillInstances.get("Memory");
+      const history = memorySkill ? memorySkill.history.slice(-20).reverse() : [];
+
+      const tasks = [...taskMap.entries()].map(([id, t]) => ({
+        id,
+        prompt: t.prompt.substring(0, 100),
+        workspace: path.basename(t.workspace),
+        elapsed: Math.floor((Date.now() - t.startTime) / 1000),
+      }));
+
+      res.writeHead(200);
+      return res.end(JSON.stringify({
+        uptime: Math.floor(process.uptime()),
+        activeCli,
+        currentWorkspace: path.basename(currentWorkspace),
+        hasSession,
+        tasks,
+        historyCount: memorySkill ? memorySkill.history.length : 0,
+        history,
+        skills: loadedSkills.map(s => s.name),
+      }));
+    }
+
     res.writeHead(404); return res.end(JSON.stringify({ error: "Not found" }));
   }
 
@@ -1422,9 +1649,65 @@ bridgeServer.listen(CONFIG.bridgePort, "127.0.0.1", () => {
   console.log(`🌉 Bridge API running on http://127.0.0.1:${CONFIG.bridgePort}`);
 });
 
-// ── Error handling ──────────────────────────────────────────────
+// ── Error handling with auto-reconnect ──────────────────────────
 
-bot.on("polling_error", (err) => console.error(`❌ Polling: ${err.message}`));
+let reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY = 60000; // max 60s between retries
+const BASE_RECONNECT_DELAY = 1000; // start at 1s
+
+bot.on("polling_error", (err) => {
+  const msg = err.message || String(err);
+  // Network errors that warrant reconnection
+  const isNetworkError = ["EFATAL", "ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "ENETUNREACH", "EAI_AGAIN"].some(code => msg.includes(code));
+
+  if (isNetworkError) {
+    reconnectAttempts++;
+    const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_DELAY);
+    console.error(`⚠️ Polling error #${reconnectAttempts}: ${msg} — retry in ${(delay/1000).toFixed(0)}s`);
+
+    // Exponential backoff: stop polling, wait, restart
+    bot.stopPolling().then(() => {
+      setTimeout(() => {
+        console.log(`🔄 Reconnecting (attempt #${reconnectAttempts})...`);
+        bot.startPolling().then(() => {
+          console.log(`✅ Reconnected successfully after ${reconnectAttempts} attempt(s)`);
+          reconnectAttempts = 0; // reset on success
+        }).catch((e) => {
+          console.error(`❌ Reconnect failed: ${e.message}`);
+        });
+      }, delay);
+    }).catch(() => {});
+  } else {
+    console.error(`❌ Polling: ${msg}`);
+  }
+});
+
+// Health ping — periodic check to detect stale connections
+setInterval(async () => {
+  try {
+    await bot.getMe();
+    if (reconnectAttempts > 0) {
+      console.log(`💚 Health check OK — connection stable`);
+      reconnectAttempts = 0;
+    }
+  } catch (e) {
+    console.warn(`💔 Health check failed: ${e.message}`);
+    // Trigger reconnect if not already reconnecting
+    if (reconnectAttempts === 0) {
+      reconnectAttempts = 1;
+      bot.stopPolling().then(() => {
+        setTimeout(() => {
+          console.log(`🔄 Health-triggered reconnect...`);
+          bot.startPolling().then(() => {
+            console.log(`✅ Health reconnect successful`);
+            reconnectAttempts = 0;
+          }).catch(() => {});
+        }, BASE_RECONNECT_DELAY);
+      }).catch(() => {});
+    }
+  }
+}, 5 * 60 * 1000); // check every 5 minutes
+
 process.on("unhandledRejection", (err) => console.error(`❌ Unhandled: ${err.message}`));
 
 console.log("📡 Waiting for Telegram messages...");
