@@ -1,0 +1,165 @@
+{
+  "lessons": [
+    {
+      "id": 1,
+      "title": "Grammar Basics: Subject-Verb Agreement",
+      "description": "Learn how subjects and verbs must agree in number (singular or plural) for clear and correct English sentences.",
+      "questions": [
+        {
+          "text": "Identify the correct sentence:",
+          "options": [
+            "Every one of the students want to pass the exam.",
+            "Every one of the students wants to pass the exam.",
+            "Every one of the students are wanting to pass the exam.",
+            "Every one of the students have wanted to pass the exam."
+          ],
+          "correctIndex": 1
+        },
+        {
+          "text": "Neither the teacher nor the students ______ present at the meeting.",
+          "options": [
+            "was",
+            "were",
+            "is",
+            "has been"
+          ],
+          "correctIndex": 1
+        },
+        {
+          "text": "The bouquet of red roses ______ a beautiful fragrance to the room.",
+          "options": [
+            "add",
+            "adds",
+            "are adding",
+            "have added"
+          ],
+          "correctIndex": 1
+        },
+        {
+          "text": "Economics ______ considered a challenging subject by many students.",
+          "options": [
+            "is",
+            "were",
+            "are",
+            "have been"
+          ],
+          "correctIndex": 0
+        },
+        {
+          "text": "A number of tourists ______ visiting the ancient castle today.",
+          "options": [
+            "is",
+            "are",
+            "was",
+            "has been"
+          ],
+          "correctIndex": 1
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Daily Vocabulary: Idioms & Expressions",
+      "description": "Expand your vocabulary with common idiomatic expressions used in daily conversations.",
+      "questions": [
+        {
+          "text": "What does the idiom 'bite the bullet' mean?",
+          "options": [
+            "To eat something hard",
+            "To make a sudden decision to travel",
+            "To face a difficult situation with courage",
+            "To speak in a very loud voice"
+          ],
+          "correctIndex": 2
+        },
+        {
+          "text": "If someone tells you to 'break a leg', what are they wishing you?",
+          "options": [
+            "Good luck",
+            "Bad health",
+            "To fall down",
+            "To run faster"
+          ],
+          "correctIndex": 0
+        },
+        {
+          "text": "What does it mean to say a decision is 'up in the air'?",
+          "options": [
+            "It has been fully resolved",
+            "It is still uncertain or undecided",
+            "It is highly public",
+            "It is very simple to make"
+          ],
+          "correctIndex": 1
+        },
+        {
+          "text": "What does the idiom 'under the weather' mean?",
+          "options": [
+            "Enjoying sunny days",
+            "Feeling slightly sick or unwell",
+            "Trapped in a heavy rainstorm",
+            "Dressed warmly for winter"
+          ],
+          "correctIndex": 1
+        },
+        {
+          "text": "To 'spill the beans' means to:",
+          "options": [
+            "Cook a traditional meal",
+            "Clean up a messy kitchen",
+            "Accidentally drop raw vegetables",
+            "Reveal a secret prematurely"
+          ],
+          "correctIndex": 3
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Everyday Conversations: Polite Phrases",
+      "description": "Practice expressing opinions, agreeing, disagreeing, and making polite requests.",
+      "questions": [
+        {
+          "text": "Which phrase is the most polite way to disagree in a discussion?",
+          "options": [
+            "You are completely wrong about this.",
+            "I see your point, but I have a slightly different view.",
+            "That makes no sense at all.",
+            "I don't want to listen to your opinion."
+          ],
+          "correctIndex": 1
+        },
+        {
+          "text": "How would you politely request someone to speak louder?",
+          "options": [
+            "Speak up now!",
+            "Why are you whispering?",
+            "Could you please speak a bit louder? I can't hear you clearly.",
+            "I don't understand your quiet voice."
+          ],
+          "correctIndex": 2
+        },
+        {
+          "text": "What is the best way to politely accept an invitation?",
+          "options": [
+            "I will think about it later.",
+            "Sure, I've got nothing better to do.",
+            "Thank you so much! I would love to attend.",
+            "Okay, if I have to."
+          ],
+          "correctIndex": 2
+        },
+        {
+          "text": "How do you ask for clarification when you don't understand an assignment?",
+          "options": [
+            "What do you want me to do?",
+            "Could you please explain this part again? I want to make sure I understand it.",
+            "Explain this, I'm confused.",
+            "This task is too hard and unclear."
+          ],
+          "correctIndex": 1
+        }
+      ]
+    }
+  ]
+}
