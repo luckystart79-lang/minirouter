@@ -28,7 +28,9 @@ function writeStore(store) {
 export async function POST(req) {
   try {
     const payload = await req.json();
-    const { clientUuid, commandType, value } = payload;
+    const clientUuid = payload.clientUuid || payload.deviceId;
+    const commandType = payload.commandType;
+    const value = payload.value !== undefined ? payload.value : payload.payload;
 
     if (!clientUuid || !commandType) {
       return NextResponse.json({ error: "Missing clientUuid or commandType" }, { status: 400 });
